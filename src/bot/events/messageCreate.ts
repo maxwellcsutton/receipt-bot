@@ -255,7 +255,7 @@ async function handleThreadMessage(message: Message): Promise<void> {
   }
 
   if (contentClean.startsWith("split ")) {
-    await handleSplit(message, session);
+    await handleSplit(message, session, effectiveUserId);
     return;
   }
 
@@ -348,10 +348,10 @@ async function handleUnclaim(
 
 async function handleSplit(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
+  effectiveUserId: string
 ): Promise<void> {
-  // Parse item index from the cleaned content (mentions already stripped by caller won't help
-  // here since split needs mentions for the target users — re-parse from raw content)
+  // Parse item index — strip mentions first since they may contain numbers
   const parts = message.content.replace(/<@!?\d+>/g, "").trim().split(/\s+/);
   const itemIndex = parseInt(parts[1], 10);
   if (isNaN(itemIndex)) {
@@ -359,8 +359,11 @@ async function handleSplit(
     return;
   }
 
-  const mentionedIds = message.mentions.users.map((u) => u.id);
-  const allUserIds = [message.author.id, ...mentionedIds.filter((id) => id !== message.author.id)];
+  const mentionedIds = message.mentions.users
+    .filter((u) => !u.bot)
+    .map((u) => u.id);
+  // effectiveUserId is the acting participant; add all other mentions, deduped
+  const allUserIds = [effectiveUserId, ...mentionedIds.filter((id) => id !== effectiveUserId)];
 
   if (allUserIds.length < 2) {
     await message.reply("Please mention at least one other user to split the item with.");
