@@ -35,10 +35,14 @@ export function buildSummaryEmbed(
     .setTitle(`🧾 ${session.restaurantName}`)
     .setColor(color);
 
+  // U+2800 braille blank: visually empty but not stripped by Discord embed rendering,
+  // ensuring all item lines (including the first) are indented consistently.
+  const INDENT = "\u2800";
+
   // Unclaimed section
   if (unclaimed.length > 0) {
     const lines = unclaimed.map(
-      (i) => `> ${i.index}. ${i.name} — $${i.unitPrice.toFixed(2)}`
+      (i) => `${INDENT}**${i.index}.** ${i.name} — $${i.unitPrice.toFixed(2)}`
     );
     embed.addFields({
       name: "UNCLAIMED",
@@ -68,7 +72,7 @@ export function buildSummaryEmbed(
           splitNote = ` (split with ${others} — $${item.amount.toFixed(2)} each)`;
         }
         claimedLines.push(
-          `> ${item.index}. ${item.name} — $${item.amount.toFixed(2)}${splitNote}`
+          `${INDENT}**${item.index}.** ${item.name} — $${item.amount.toFixed(2)}${splitNote}`
         );
       }
       claimedLines.push("");
@@ -103,7 +107,9 @@ export function formatItemList(
     "`tip 20%` or `tip 15.00` — set tip (primary user only)",
     "`tip 0` — skip tip",
     "`paid` — mark yourself as paid",
+    "`unpaid` — mark yourself as unpaid",
     "`status` — show current claim status",
+    "`adduser @user` — add a new user to the receipt (primary user only)",
     "_(Primary user: add @user to any command to act on their behalf)_",
   ].join("\n");
 

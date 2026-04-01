@@ -264,8 +264,18 @@ async function handleThreadMessage(message: Message): Promise<void> {
     return;
   }
 
+  if (contentClean === "unpaid") {
+    await handleUnpaid(message, session, effectiveUserId);
+    return;
+  }
+
   if (contentClean === "status") {
     await handleStatus(message, session);
+    return;
+  }
+
+  if (contentClean.startsWith("adduser ")) {
+    await handleAddUser(message, session);
     return;
   }
 
@@ -374,6 +384,63 @@ async function handleSplit(
   await message.reply(`Item ${itemIndex} split between ${names} — $${perPerson} each.`);
 
   const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleUnpaid(
+  message: Message,
+  session: ReceiptSession,
+  targetUserId: string
+): Promise<void> {
+  const payments = manager.getPaymentStatuses(session.id);
+  const userPayment = payments.find((p) => p.userId === targetUserId);
+
+  if (!userPayment) {
+    await message.reply("That user doesn't have any claimed items on this receipt.");
+    return;
+  }
+
+  if (!userPayment.paid) {
+    await message.reply("That user is already marked as unpaid.");
+    return;
+  }
+
+  manager.markUserUnpaid(session.id, targetUserId);
+
+  const displayName = await getDisplayNameResolver(message, session);
+  await message.reply(`${displayName(targetUserId)} marked as unpaid.`);
+
+  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleAddUser(
+  message: Message,
+  session: ReceiptSession
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can add new users.");
+    return;
+  }
+
+  const newUsers = message.mentions.users
+    .filter((u) => !u.bot && !session.taggedUserIds.includes(u.id))
+    .map((u) => u.id);
+
+  if (newUsers.length === 0) {
+    await message.reply("No new users to add. Make sure you @mention users not already in this receipt.");
+    return;
+  }
+
+  for (const userId of newUsers) {
+    manager.addUserToSession(session.id, userId);
+  }
+
+  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const displayName = await getDisplayNameResolver(message, refreshedSession);
+  const names = newUsers.map((id) => displayName(id)).join(", ");
+  await message.reply(`Added ${names} to the receipt. They can now claim items.`);
+
   await updateSummaryMessage(message, refreshedSession);
 }
 

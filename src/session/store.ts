@@ -209,6 +209,13 @@ export function markPaid(sessionId: string, userId: string): void {
   ).run(sessionId, userId);
 }
 
+export function markUnpaid(sessionId: string, userId: string): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE user_payments SET paid = 0 WHERE session_id = ? AND user_id = ?"
+  ).run(sessionId, userId);
+}
+
 export function getUserPayments(
   sessionId: string
 ): { userId: string; paid: boolean }[] {
@@ -240,6 +247,22 @@ export function updateSummaryMessageId(
   db.prepare(
     "UPDATE receipt_sessions SET summary_message_id = ? WHERE id = ?"
   ).run(messageId, sessionId);
+}
+
+export function addTaggedUser(sessionId: string, userId: string): void {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT tagged_user_ids FROM receipt_sessions WHERE id = ?")
+    .get(sessionId) as any;
+  if (!row) return;
+  const ids: string[] = JSON.parse(row.tagged_user_ids);
+  if (!ids.includes(userId)) {
+    ids.push(userId);
+    db.prepare("UPDATE receipt_sessions SET tagged_user_ids = ? WHERE id = ?").run(
+      JSON.stringify(ids),
+      sessionId
+    );
+  }
 }
 
 export function updateTip(sessionId: string, tipAmount: number): void {

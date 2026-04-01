@@ -53,6 +53,14 @@ export function markUserPaid(sessionId: string, userId: string): void {
   store.markPaid(sessionId, userId);
 }
 
+export function markUserUnpaid(sessionId: string, userId: string): void {
+  store.markUnpaid(sessionId, userId);
+}
+
+export function addUserToSession(sessionId: string, userId: string): void {
+  store.addTaggedUser(sessionId, userId);
+}
+
 export function setSummaryMessageId(
   sessionId: string,
   messageId: string
