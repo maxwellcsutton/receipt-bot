@@ -1,15 +1,11 @@
 export function parseItemNumbers(text: string): number[] {
+  // Only accept individual numbers separated by commas or whitespace — no ranges
+  const tokens = text.split(/[\s,]+/);
   const numbers: number[] = [];
-  const matches = text.matchAll(/(\d+)(?:\s*-\s*(\d+))?/g);
-  for (const match of matches) {
-    const start = parseInt(match[1], 10);
-    if (match[2]) {
-      const end = parseInt(match[2], 10);
-      for (let i = Math.min(start, end); i <= Math.max(start, end); i++) {
-        if (!numbers.includes(i)) numbers.push(i);
-      }
-    } else {
-      if (!numbers.includes(start)) numbers.push(start);
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      const n = parseInt(token, 10);
+      if (!numbers.includes(n)) numbers.push(n);
     }
   }
   return numbers.sort((a, b) => a - b);

@@ -67,5 +67,25 @@ export function initDatabase(): void {
       PRIMARY KEY (session_id, user_id),
       FOREIGN KEY (session_id) REFERENCES receipt_sessions(id)
     );
+
+    CREATE TABLE IF NOT EXISTS restaurant_stats (
+      guild_id TEXT NOT NULL,
+      restaurant_name TEXT NOT NULL,
+      total_spend REAL NOT NULL DEFAULT 0,
+      receipt_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (guild_id, restaurant_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_stats (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      total_spend REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS api_cost_log (
+      date TEXT NOT NULL PRIMARY KEY,
+      estimated_cost_usd REAL NOT NULL DEFAULT 0
+    );
   `);
 }

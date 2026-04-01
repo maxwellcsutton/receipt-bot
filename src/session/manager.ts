@@ -72,6 +72,33 @@ export function getPaymentStatuses(
   return store.getUserPayments(sessionId);
 }
 
+export function recordSettlement(
+  guildId: string,
+  restaurantName: string,
+  userTotals: { userId: string; grandTotal: number }[]
+): void {
+  store.recordSettlement(guildId, restaurantName, userTotals);
+}
+
+export function getLeaderboard(guildId: string): {
+  restaurants: { restaurantName: string; totalSpend: number; receiptCount: number }[];
+  users: { userId: string; totalSpend: number }[];
+} {
+  return {
+    restaurants: store.getTopRestaurants(guildId),
+    users: store.getTopUsers(guildId),
+  };
+}
+
+export function checkDailyLimit(): void {
+  store.checkDailyLimit();
+}
+
+export function logApiCost(costUsd: number): void {
+  const today = new Date().toISOString().slice(0, 10);
+  store.addApiCost(today, costUsd);
+}
+
 export function checkAllClaimedAndPaid(session: ReceiptSession): {
   allClaimed: boolean;
   allPaid: boolean;

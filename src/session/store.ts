@@ -247,6 +247,103 @@ export function updateTip(sessionId: string, tipAmount: number): void {
   );
 }
 
+// --- Leaderboard / Stats ---
+
+export function recordSettlement(
+  guildId: string,
+  restaurantName: string,
+  userTotals: { userId: string; grandTotal: number }[]
+): void {
+  const db = getDb();
+
+  const upsertRestaurant = db.prepare(`
+    INSERT INTO restaurant_stats (guild_id, restaurant_name, total_spend, receipt_count)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT(guild_id, restaurant_name) DO UPDATE SET
+      total_spend = total_spend + excluded.total_spend,
+      receipt_count = receipt_count + 1
+  `);
+
+  const upsertUser = db.prepare(`
+    INSERT INTO user_stats (guild_id, user_id, total_spend)
+    VALUES (?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      total_spend = total_spend + excluded.total_spend
+  `);
+
+  const receiptTotal = userTotals.reduce((sum, u) => sum + u.grandTotal, 0);
+
+  const transaction = db.transaction(() => {
+    upsertRestaurant.run(guildId, restaurantName, receiptTotal);
+    for (const ut of userTotals) {
+      if (ut.grandTotal > 0) {
+        upsertUser.run(guildId, ut.userId, ut.grandTotal);
+      }
+    }
+  });
+  transaction();
+}
+
+export function getTopRestaurants(
+  guildId: string,
+  limit = 5
+): { restaurantName: string; totalSpend: number; receiptCount: number }[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT restaurant_name, total_spend, receipt_count FROM restaurant_stats WHERE guild_id = ? ORDER BY total_spend DESC LIMIT ?"
+    )
+    .all(guildId, limit) as any[];
+  return rows.map((r) => ({
+    restaurantName: r.restaurant_name,
+    totalSpend: r.total_spend,
+    receiptCount: r.receipt_count,
+  }));
+}
+
+export function getTopUsers(
+  guildId: string,
+  limit = 5
+): { userId: string; totalSpend: number }[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT user_id, total_spend FROM user_stats WHERE guild_id = ? ORDER BY total_spend DESC LIMIT ?"
+    )
+    .all(guildId, limit) as any[];
+  return rows.map((r) => ({ userId: r.user_id, totalSpend: r.total_spend }));
+}
+
+// --- API spend limit ---
+
+const DAILY_LIMIT_USD = 0.10;
+
+export function getDailyApiCost(date: string): number {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT estimated_cost_usd FROM api_cost_log WHERE date = ?")
+    .get(date) as any;
+  return row?.estimated_cost_usd ?? 0;
+}
+
+export function addApiCost(date: string, costUsd: number): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO api_cost_log (date, estimated_cost_usd) VALUES (?, ?)
+    ON CONFLICT(date) DO UPDATE SET estimated_cost_usd = estimated_cost_usd + excluded.estimated_cost_usd
+  `).run(date, costUsd);
+}
+
+export function checkDailyLimit(): void {
+  const today = new Date().toISOString().slice(0, 10);
+  const used = getDailyApiCost(today);
+  if (used >= DAILY_LIMIT_USD) {
+    throw new Error(
+      `Daily API spend limit reached ($${DAILY_LIMIT_USD.toFixed(2)}/day). Used: $${used.toFixed(4)}. Resets at midnight UTC.`
+    );
+  }
+}
+
 // --- Helpers ---
 
 function rowToSession(row: any): ReceiptSession {

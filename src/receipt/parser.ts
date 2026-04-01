@@ -4,24 +4,28 @@ import { ParsedReceipt, LineItem } from "./types.js";
 
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 
-const modelName = process.env.CLAUDE_MODEL || "claude-default";
+const MODEL = process.env.CLAUDE_MODEL || "claude-haiku-4-5-20241022";
+
+// Haiku 4.5 pricing (per token)
+const COST_PER_INPUT_TOKEN = 0.80 / 1_000_000;
+const COST_PER_OUTPUT_TOKEN = 4.00 / 1_000_000;
+
+const ITEM_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    name: { type: "string" as const },
+    unit_price: { type: "number" as const },
+  },
+  required: ["name", "unit_price"] as const,
+  additionalProperties: false,
+};
 
 const RECEIPT_SCHEMA = {
   type: "object" as const,
   properties: {
     items: {
       type: "array" as const,
-      items: {
-        type: "object" as const,
-        properties: {
-          name: { type: "string" as const },
-          quantity: { type: "integer" as const },
-          unit_price: { type: "number" as const },
-          total_price: { type: "number" as const },
-        },
-        required: ["name", "quantity", "unit_price", "total_price"] as const,
-        additionalProperties: false,
-      },
+      items: ITEM_SCHEMA,
     },
     subtotal: { type: "number" as const },
     tax: { type: "number" as const },
@@ -32,12 +36,17 @@ const RECEIPT_SCHEMA = {
   additionalProperties: false,
 };
 
+export interface ParseResult {
+  parsed: ParsedReceipt;
+  estimatedCostUsd: number;
+}
+
 export async function parseReceiptImage(
   imageBase64: string,
-  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-): Promise<ParsedReceipt> {
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+): Promise<ParseResult> {
   const response = await anthropic.messages.create({
-    model: modelName,
+    model: MODEL,
     max_tokens: 4096,
     messages: [
       {
@@ -45,15 +54,24 @@ export async function parseReceiptImage(
         content: [
           {
             type: "image",
-            source: {
-              type: "base64",
-              media_type: mediaType,
-              data: imageBase64,
-            },
+            source: { type: "base64", media_type: mediaType, data: imageBase64 },
           },
           {
             type: "text",
-            text: `Extract all line items from this receipt. For each item, provide the name, quantity, unit price (price per single item), and total price (quantity × unit price). Also extract the subtotal (sum of all items before tax/tip), tax amount, tip amount (null if no tip is shown), and the total. Return only the JSON — no commentary.  Use the following schema for the json response: ${JSON.stringify(RECEIPT_SCHEMA)}`,
+            text: `Extract all line items from this receipt as individual units.
+
+CRITICAL RULE: If an item has quantity > 1, list it as SEPARATE entries — one entry per unit.
+Example: "3x Mild Spicy Lamb $40.50" → three items: {"name":"Mild Spicy Lamb","unit_price":13.50}, {"name":"Mild Spicy Lamb","unit_price":13.50}, {"name":"Mild Spicy Lamb","unit_price":13.50}
+Never use a quantity field — every item in your response must represent exactly one unit.
+
+Also extract:
+- subtotal: sum of all item prices before tax and tip
+- tax: tax amount (0 if none)
+- tip: tip amount (null if not shown on receipt)
+- total: final total on receipt
+
+Return ONLY valid JSON matching this schema, no commentary:
+${JSON.stringify(RECEIPT_SCHEMA)}`,
           },
         ],
       },
@@ -65,54 +83,58 @@ export async function parseReceiptImage(
     throw new Error("No text response from Claude");
   }
 
-  // Extract JSON from the response (may be wrapped in markdown code block)
   let jsonStr = textBlock.text.trim();
   const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonMatch) {
     jsonStr = jsonMatch[1].trim();
   }
 
-  const parsed: ParsedReceipt = JSON.parse(jsonStr);
-  return parsed;
+  const rawParsed = JSON.parse(jsonStr) as {
+    items: { name: string; unit_price: number }[];
+    subtotal: number;
+    tax: number;
+    tip: number | null;
+    total: number;
+  };
+
+  // Convert to ParsedReceipt format (each item is already quantity=1)
+  const parsed: ParsedReceipt = {
+    items: rawParsed.items.map((item) => ({
+      name: item.name,
+      quantity: 1,
+      unit_price: item.unit_price,
+      total_price: item.unit_price,
+    })),
+    subtotal: rawParsed.subtotal,
+    tax: rawParsed.tax,
+    tip: rawParsed.tip,
+    total: rawParsed.total,
+  };
+
+  const estimatedCostUsd =
+    response.usage.input_tokens * COST_PER_INPUT_TOKEN +
+    response.usage.output_tokens * COST_PER_OUTPUT_TOKEN;
+
+  return { parsed, estimatedCostUsd };
 }
 
 export function expandLineItems(parsed: ParsedReceipt): LineItem[] {
   if (!Array.isArray(parsed.items)) {
-    console.error("parsed.items is not an array:", parsed.items);
     throw new TypeError("parsed.items must be an array");
   }
 
-  const items: LineItem[] = [];
-  let index = 1;
-
-  for (const item of parsed.items) {
-    if (item.quantity > 1) {
-      for (let i = 1; i <= item.quantity; i++) {
-        items.push({
-          index: index++,
-          name: `${item.name} (${i} of ${item.quantity})`,
-          unitPrice: item.unit_price,
-          originalQuantity: item.quantity,
-          claimedByUserId: null,
-        });
-      }
-    } else {
-      items.push({
-        index: index++,
-        name: item.name,
-        unitPrice: item.unit_price,
-        originalQuantity: 1,
-        claimedByUserId: null,
-      });
-    }
-  }
-
-  return items;
+  return parsed.items.map((item, i) => ({
+    index: i + 1,
+    name: item.name,
+    unitPrice: item.unit_price,
+    originalQuantity: 1,
+    claimedByUserId: null,
+  }));
 }
 
 export function validateReceipt(
   parsed: ParsedReceipt,
-  items: LineItem[],
+  items: LineItem[]
 ): string | null {
   const itemsSum = items.reduce((sum, item) => sum + item.unitPrice, 0);
   const diff = Math.abs(itemsSum - parsed.subtotal);

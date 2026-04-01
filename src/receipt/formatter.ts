@@ -103,8 +103,8 @@ export function formatItemList(
   const commands = [
     "",
     "**Commands:**",
-    "`1, 3, 5` or `1-3` — claim items",
-    "`unclaim 1, 3` — release claimed items",
+    "`1 3 5` — claim items (space or comma separated)",
+    "`unclaim 1 3` — release claimed items",
     "`split 3 @user1 @user2` — split an item between users",
     "`tip 20%` or `tip 15.00` — set tip (primary user only)",
     "`tip 0` — skip tip",
