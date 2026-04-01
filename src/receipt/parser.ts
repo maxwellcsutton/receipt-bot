@@ -10,13 +10,16 @@ const MODEL = process.env.CLAUDE_MODEL || "claude-haiku-4-5-20241022";
 const COST_PER_INPUT_TOKEN = 0.80 / 1_000_000;
 const COST_PER_OUTPUT_TOKEN = 4.00 / 1_000_000;
 
-const ITEM_SCHEMA = {
+// Claude returns one entry per receipt line — quantity and line_total only.
+// We handle division and expansion in code.
+const RAW_ITEM_SCHEMA = {
   type: "object" as const,
   properties: {
     name: { type: "string" as const },
-    unit_price: { type: "number" as const },
+    quantity: { type: "integer" as const },
+    line_total: { type: "number" as const },
   },
-  required: ["name", "unit_price"] as const,
+  required: ["name", "quantity", "line_total"] as const,
   additionalProperties: false,
 };
 
@@ -25,7 +28,7 @@ const RECEIPT_SCHEMA = {
   properties: {
     items: {
       type: "array" as const,
-      items: ITEM_SCHEMA,
+      items: RAW_ITEM_SCHEMA,
     },
     subtotal: { type: "number" as const },
     tax: { type: "number" as const },
@@ -35,6 +38,20 @@ const RECEIPT_SCHEMA = {
   required: ["items", "subtotal", "tax", "tip", "total"] as const,
   additionalProperties: false,
 };
+
+interface RawReceiptItem {
+  name: string;
+  quantity: number;
+  line_total: number;
+}
+
+interface RawReceipt {
+  items: RawReceiptItem[];
+  subtotal: number;
+  tax: number;
+  tip: number | null;
+  total: number;
+}
 
 export interface ParseResult {
   parsed: ParsedReceipt;
@@ -58,23 +75,14 @@ export async function parseReceiptImage(
           },
           {
             type: "text",
-            text: `Extract all line items from this receipt as individual units.
+            text: `Extract all line items from this receipt. For each line item output one entry with:
+- name: the item name, stripped of any parenthetical numbers (e.g. "Mild Spicy Lamb Kebab(5)" → "Mild Spicy Lamb Kebab")
+- quantity: the number in the LEFTMOST column of that line. This is the only source of truth for quantity. Numbers inside the item name (like the "(5)" or "(1)") are NOT the quantity — ignore them.
+- line_total: the price shown on the right for that line (the full amount for all units combined)
 
-QUANTITY RULE — this is the most important rule:
-- Receipts have a leftmost numeric column that is the quantity ordered. That number is the ONLY source of truth for quantity.
-- Numbers that appear INSIDE item names (e.g. in parentheses like "Lamb Kebab(5)" or "Mushroom(1)") describe the item itself (e.g. pieces per skewer). They are NOT the quantity. Ignore them entirely when determining quantity.
-- unit_price = line total ÷ left-column quantity. Do the division — never copy the line total as the unit price.
+Output one JSON object per receipt line — do not expand or split quantities, that will be handled separately.
 
-EXPANSION RULE:
-- Every item in your response represents exactly one unit. Never use a quantity field.
-- If the left-column quantity is N, output N separate entries each with unit_price = line_total / N.
-- Example: left column shows 3, item name "Mild Spicy Lamb Kebab(5)", line total $40.50 → three entries: {"name":"Mild Spicy Lamb Kebab","unit_price":13.50} × 3
-
-Also extract:
-- subtotal: sum of all item prices before tax and tip
-- tax: tax amount (0 if none)
-- tip: tip amount (null if not shown on receipt)
-- total: final total on receipt
+Also extract subtotal, tax, tip (null if not on receipt), and total.
 
 Return ONLY valid JSON matching this schema, no commentary:
 ${JSON.stringify(RECEIPT_SCHEMA)}`,
@@ -95,26 +103,20 @@ ${JSON.stringify(RECEIPT_SCHEMA)}`,
     jsonStr = jsonMatch[1].trim();
   }
 
-  const rawParsed = JSON.parse(jsonStr) as {
-    items: { name: string; unit_price: number }[];
-    subtotal: number;
-    tax: number;
-    tip: number | null;
-    total: number;
-  };
+  const raw = JSON.parse(jsonStr) as RawReceipt;
 
-  // Convert to ParsedReceipt format (each item is already quantity=1)
+  // Convert: unit_price = line_total / quantity
   const parsed: ParsedReceipt = {
-    items: rawParsed.items.map((item) => ({
+    items: raw.items.map((item) => ({
       name: item.name,
-      quantity: 1,
-      unit_price: item.unit_price,
-      total_price: item.unit_price,
+      quantity: item.quantity,
+      unit_price: Math.round((item.line_total / item.quantity) * 100) / 100,
+      total_price: item.line_total,
     })),
-    subtotal: rawParsed.subtotal,
-    tax: rawParsed.tax,
-    tip: rawParsed.tip,
-    total: rawParsed.total,
+    subtotal: raw.subtotal,
+    tax: raw.tax,
+    tip: raw.tip,
+    total: raw.total,
   };
 
   const estimatedCostUsd =
@@ -129,13 +131,33 @@ export function expandLineItems(parsed: ParsedReceipt): LineItem[] {
     throw new TypeError("parsed.items must be an array");
   }
 
-  return parsed.items.map((item, i) => ({
-    index: i + 1,
-    name: item.name,
-    unitPrice: item.unit_price,
-    originalQuantity: 1,
-    claimedByUserId: null,
-  }));
+  const items: LineItem[] = [];
+  let index = 1;
+
+  for (const item of parsed.items) {
+    const qty = item.quantity ?? 1;
+    if (qty > 1) {
+      for (let i = 1; i <= qty; i++) {
+        items.push({
+          index: index++,
+          name: `${item.name} (${i} of ${qty})`,
+          unitPrice: item.unit_price,
+          originalQuantity: qty,
+          claimedByUserId: null,
+        });
+      }
+    } else {
+      items.push({
+        index: index++,
+        name: item.name,
+        unitPrice: item.unit_price,
+        originalQuantity: 1,
+        claimedByUserId: null,
+      });
+    }
+  }
+
+  return items;
 }
 
 export function validateReceipt(

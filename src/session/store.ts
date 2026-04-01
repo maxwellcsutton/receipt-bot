@@ -194,9 +194,12 @@ export function getSplitItems(sessionId: string): SplitEntry[] {
 
 function ensureUserPayment(sessionId: string, userId: string): void {
   const db = getDb();
-  db.prepare(
-    "INSERT OR IGNORE INTO user_payments (session_id, user_id, paid) VALUES (?, ?, 0)"
-  ).run(sessionId, userId);
+  // Insert if not present; if already present and marked paid, reset to unpaid
+  // so the user must pay again after claiming additional items.
+  db.prepare(`
+    INSERT INTO user_payments (session_id, user_id, paid) VALUES (?, ?, 0)
+    ON CONFLICT(session_id, user_id) DO UPDATE SET paid = 0 WHERE paid = 1
+  `).run(sessionId, userId);
 }
 
 export function markPaid(sessionId: string, userId: string): void {

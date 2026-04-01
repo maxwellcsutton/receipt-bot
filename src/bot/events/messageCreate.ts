@@ -190,7 +190,7 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
 
   manager.createReceiptSession(session, lineItems);
 
-  const itemListMsg = formatItemList(lineItems, session.taggedUserIds);
+  const itemListMsg = formatItemList(session.taggedUserIds);
   await thread.send(itemListMsg);
 
   const displayName = await getDisplayNameResolver(message, session);
@@ -244,6 +244,11 @@ async function handleThreadMessage(message: Message): Promise<void> {
 
   if (content === "paid" || content === "done") {
     await handlePaid(message, session);
+    return;
+  }
+
+  if (content === "status") {
+    await handleStatus(message, session);
     return;
   }
 
@@ -344,6 +349,19 @@ async function handleSplit(
 
   const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
   await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleStatus(
+  message: Message,
+  session: ReceiptSession
+): Promise<void> {
+  const displayName = await getDisplayNameResolver(message, session);
+  const items = manager.getItems(session.id);
+  const userTotals = manager.getUserTotals(session);
+  const payments = manager.getPaymentStatuses(session.id);
+  const splits = manager.getSplits(session.id);
+  const embed = buildSummaryEmbed(session, items, userTotals, payments, splits, displayName);
+  await message.reply({ embeds: [embed] });
 }
 
 async function handleTipCommand(

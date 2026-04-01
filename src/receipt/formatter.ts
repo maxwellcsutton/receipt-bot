@@ -38,7 +38,7 @@ export function buildSummaryEmbed(
   // Unclaimed section
   if (unclaimed.length > 0) {
     const lines = unclaimed.map(
-      (i) => `  ${i.index}. ${i.name} — $${i.unitPrice.toFixed(2)}`
+      (i) => `> ${i.index}. ${i.name} — $${i.unitPrice.toFixed(2)}`
     );
     embed.addFields({
       name: "UNCLAIMED",
@@ -68,7 +68,7 @@ export function buildSummaryEmbed(
           splitNote = ` (split with ${others} — $${item.amount.toFixed(2)} each)`;
         }
         claimedLines.push(
-          `  ${item.index}. ${item.name} — $${item.amount.toFixed(2)}${splitNote}`
+          `> ${item.index}. ${item.name} — $${item.amount.toFixed(2)}${splitNote}`
         );
       }
       claimedLines.push("");
@@ -80,28 +80,22 @@ export function buildSummaryEmbed(
     });
   }
 
-  // Footer with totals
-  const tipStr =
-    session.tipAmount !== null
-      ? `$${session.tipAmount.toFixed(2)}`
-      : "not set";
+  // Footer with totals — compute dynamically so tip updates are reflected
+  const tipAmount = session.tipAmount ?? 0;
+  const tipStr = session.tipAmount !== null ? `$${tipAmount.toFixed(2)}` : "not set";
+  const computedTotal = session.subtotal + session.taxAmount + tipAmount;
   embed.setFooter({
-    text: `Subtotal: $${session.subtotal.toFixed(2)} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${session.total.toFixed(2)}`,
+    text: `Subtotal: $${session.subtotal.toFixed(2)} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`,
   });
 
   return embed;
 }
 
 export function formatItemList(
-  items: LineItem[],
   taggedUserIds: string[]
 ): string {
   const header = taggedUserIds.map((id) => `<@${id}>`).join(" ");
-  const lines = items.map(
-    (i) => `${i.index}. ${i.name} — $${i.unitPrice.toFixed(2)}`
-  );
   const commands = [
-    "",
     "**Commands:**",
     "`1 3 5` — claim items (space or comma separated)",
     "`unclaim 1 3` — release claimed items",
@@ -109,14 +103,19 @@ export function formatItemList(
     "`tip 20%` or `tip 15.00` — set tip (primary user only)",
     "`tip 0` — skip tip",
     "`paid` — mark yourself as paid",
+    "`status` — show current claim status",
   ].join("\n");
 
-  return `${header}\n\nReply with the item numbers you want to claim.\n\n${lines.join("\n")}${commands}`;
+  return `${header}\n\nReply with the item numbers you want to claim.\n\n${commands}`;
 }
 
 export function formatUserTotal(ut: UserTotal, tipSet: boolean, name: string): string {
-  let msg = `**${name}**, your items total: **$${ut.itemsTotal.toFixed(2)}**\n`;
-  msg += `Tax: $${ut.taxShare.toFixed(2)}`;
+  const itemLines = ut.items
+    .map((i) => `  ${i.index}. ${i.name} — $${i.amount.toFixed(2)}`)
+    .join("\n");
+
+  let msg = `**${name}**, you claimed:\n${itemLines}\n\n`;
+  msg += `Items: $${ut.itemsTotal.toFixed(2)} | Tax: $${ut.taxShare.toFixed(2)}`;
   if (tipSet) {
     msg += ` | Tip: $${ut.tipShare.toFixed(2)}`;
   }
