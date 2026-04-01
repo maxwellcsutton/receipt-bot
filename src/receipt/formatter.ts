@@ -97,13 +97,14 @@ export function formatItemList(
   const header = taggedUserIds.map((id) => `<@${id}>`).join(" ");
   const commands = [
     "**Commands:**",
-    "`1 3 5` — claim items (space or comma separated)",
+    "`claim 1 3 5` — claim items by number",
     "`unclaim 1 3` — release claimed items",
     "`split 3 @user1 @user2` — split an item between users",
     "`tip 20%` or `tip 15.00` — set tip (primary user only)",
     "`tip 0` — skip tip",
     "`paid` — mark yourself as paid",
     "`status` — show current claim status",
+    "_(Primary user: add @user to any command to act on their behalf)_",
   ].join("\n");
 
   return `${header}\n\nReply with the item numbers you want to claim.\n\n${commands}`;

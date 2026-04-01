@@ -66,6 +66,19 @@ export function registerMessageCreateEvent(client: Client): void {
   });
 }
 
+// Returns the ID of a tagged secondary user mentioned in the message if the
+// message author is the primary user. Used for proxy commands.
+function getProxyTarget(message: Message, session: ReceiptSession): string | null {
+  if (message.author.id !== session.primaryUserId) return null;
+  const mentioned = message.mentions.users
+    .filter((u) => !u.bot && u.id !== message.author.id)
+    .map((u) => u.id);
+  if (mentioned.length !== 1) return null;
+  const targetId = mentioned[0];
+  if (!session.taggedUserIds.includes(targetId)) return null;
+  return targetId;
+}
+
 async function getDisplayNameResolver(message: Message, session: ReceiptSession): Promise<DisplayNameResolver> {
   const guild = message.guild;
   if (!guild) return (id: string) => `<@${id}>`;
@@ -159,7 +172,6 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
 
   const { parsed, estimatedCostUsd } = await parseReceiptImage(imageBase64, mediaType);
 
-  // Log the API cost
   manager.logApiCost(estimatedCostUsd);
 
   const lineItems = expandLineItems(parsed);
@@ -225,36 +237,45 @@ async function handleThreadMessage(message: Message): Promise<void> {
     return;
   }
 
-  const content = message.content.trim().toLowerCase();
+  // Strip mentions from content so proxy commands parse cleanly
+  const contentClean = message.content.replace(/<@!?\d+>/g, "").trim().toLowerCase();
 
-  if (content.startsWith("tip ")) {
-    await handleTipCommand(message, session);
+  // Proxy target: if primary user tags a secondary user, act on their behalf
+  const proxyTarget = getProxyTarget(message, session);
+  const effectiveUserId = proxyTarget ?? message.author.id;
+
+  if (contentClean.startsWith("tip ")) {
+    await handleTipCommand(message, session, contentClean);
     return;
   }
 
-  if (content.startsWith("unclaim ")) {
-    await handleUnclaim(message, session);
+  if (contentClean.startsWith("unclaim ")) {
+    await handleUnclaim(message, session, contentClean, effectiveUserId);
     return;
   }
 
-  if (content.startsWith("split ")) {
+  if (contentClean.startsWith("split ")) {
     await handleSplit(message, session);
     return;
   }
 
-  if (content === "paid" || content === "done") {
-    await handlePaid(message, session);
+  if (contentClean === "paid" || contentClean === "done") {
+    await handlePaid(message, session, effectiveUserId);
     return;
   }
 
-  if (content === "status") {
+  if (contentClean === "status") {
     await handleStatus(message, session);
     return;
   }
 
-  const numbers = parseItemNumbers(message.content);
-  if (numbers.length > 0) {
-    await handleClaim(message, session, numbers);
+  if (contentClean.startsWith("claim ") || contentClean === "claim") {
+    const numbers = parseItemNumbers(contentClean.slice("claim".length));
+    if (numbers.length === 0) {
+      await message.reply("Please specify item numbers (e.g. `claim 1 3 5`).");
+      return;
+    }
+    await handleClaim(message, session, numbers, effectiveUserId);
     return;
   }
 }
@@ -262,10 +283,11 @@ async function handleThreadMessage(message: Message): Promise<void> {
 async function handleClaim(
   message: Message,
   session: ReceiptSession,
-  itemNumbers: number[]
+  itemNumbers: number[],
+  targetUserId: string
 ): Promise<void> {
   try {
-    manager.claimItems(session.id, itemNumbers, message.author.id);
+    manager.claimItems(session.id, itemNumbers, targetUserId);
   } catch (err) {
     await message.reply(
       err instanceof Error ? err.message : "Failed to claim items."
@@ -276,11 +298,11 @@ async function handleClaim(
   const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
   const displayName = await getDisplayNameResolver(message, refreshedSession);
   const userTotals = manager.getUserTotals(refreshedSession);
-  const ut = userTotals.find((u) => u.userId === message.author.id);
+  const ut = userTotals.find((u) => u.userId === targetUserId);
 
   if (ut) {
     const tipSet = refreshedSession.tipAmount !== null;
-    await message.reply(formatUserTotal(ut, tipSet, displayName(message.author.id)));
+    await message.reply(formatUserTotal(ut, tipSet, displayName(targetUserId)));
   }
 
   await updateSummaryMessage(message, refreshedSession);
@@ -289,16 +311,18 @@ async function handleClaim(
 
 async function handleUnclaim(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
+  contentClean: string,
+  targetUserId: string
 ): Promise<void> {
-  const numbers = parseItemNumbers(message.content.slice("unclaim ".length));
+  const numbers = parseItemNumbers(contentClean.slice("unclaim ".length));
   if (numbers.length === 0) {
     await message.reply("Please specify item numbers to unclaim (e.g. `unclaim 1 3`).");
     return;
   }
 
   try {
-    manager.unclaimItems(session.id, numbers, message.author.id);
+    manager.unclaimItems(session.id, numbers, targetUserId);
   } catch (err) {
     await message.reply(
       err instanceof Error ? err.message : "Failed to unclaim items."
@@ -316,7 +340,9 @@ async function handleSplit(
   message: Message,
   session: ReceiptSession
 ): Promise<void> {
-  const parts = message.content.trim().split(/\s+/);
+  // Parse item index from the cleaned content (mentions already stripped by caller won't help
+  // here since split needs mentions for the target users — re-parse from raw content)
+  const parts = message.content.replace(/<@!?\d+>/g, "").trim().split(/\s+/);
   const itemIndex = parseInt(parts[1], 10);
   if (isNaN(itemIndex)) {
     await message.reply("Usage: `split <item number> @user1 @user2`");
@@ -366,14 +392,15 @@ async function handleStatus(
 
 async function handleTipCommand(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
+  contentClean: string
 ): Promise<void> {
   if (message.author.id !== session.primaryUserId) {
     await message.reply("Only the primary user can set the tip.");
     return;
   }
 
-  const tipStr = message.content.trim().slice("tip ".length).trim();
+  const tipStr = contentClean.slice("tip ".length).trim();
   let tipAmount: number;
 
   if (tipStr.endsWith("%")) {
@@ -400,25 +427,26 @@ async function handleTipCommand(
 
 async function handlePaid(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
+  targetUserId: string
 ): Promise<void> {
   const payments = manager.getPaymentStatuses(session.id);
-  const userPayment = payments.find((p) => p.userId === message.author.id);
+  const userPayment = payments.find((p) => p.userId === targetUserId);
 
   if (!userPayment) {
-    await message.reply("You don't have any claimed items on this receipt.");
+    await message.reply("That user doesn't have any claimed items on this receipt.");
     return;
   }
 
   if (userPayment.paid) {
-    await message.reply("You're already marked as paid.");
+    await message.reply("That user is already marked as paid.");
     return;
   }
 
-  manager.markUserPaid(session.id, message.author.id);
+  manager.markUserPaid(session.id, targetUserId);
 
   const displayName = await getDisplayNameResolver(message, session);
-  await message.reply(`${displayName(message.author.id)} marked as paid! ✅`);
+  await message.reply(`${displayName(targetUserId)} marked as paid! ✅`);
 
   const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
   await updateSummaryMessage(message, refreshedSession);
@@ -459,7 +487,6 @@ async function checkAndNotify(
     const displayName = await getDisplayNameResolver(message, session);
     const primaryName = displayName(session.primaryUserId);
 
-    // Record stats for the leaderboard
     const userTotals = manager.getUserTotals(session);
     manager.recordSettlement(session.guildId, session.restaurantName, userTotals);
 
