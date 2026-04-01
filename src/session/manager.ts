@@ -107,6 +107,13 @@ export function logApiCost(costUsd: number): void {
   store.addApiCost(today, costUsd);
 }
 
+export function getUnpaidSessionsForUser(
+  guildId: string,
+  userId: string
+): ReceiptSession[] {
+  return store.getUnpaidSessionsForUser(guildId, userId);
+}
+
 export function checkAllClaimedAndPaid(session: ReceiptSession): {
   allClaimed: boolean;
   allPaid: boolean;

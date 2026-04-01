@@ -14,7 +14,7 @@ import {
   validateReceipt,
 } from "../../receipt/parser.js";
 import {
-  buildSummaryEmbed,
+  buildSummaryEmbeds,
   formatItemList,
   formatUserTotal,
 } from "../../receipt/formatter.js";
@@ -26,7 +26,7 @@ import {
   buildDisplayNameResolver,
   DisplayNameResolver,
 } from "../../utils/discord.js";
-import { ReceiptSession } from "../../receipt/types.js";
+import { ReceiptSession, UserTotal } from "../../receipt/types.js";
 
 export function registerMessageCreateEvent(client: Client): void {
   client.on("messageCreate", async (message: Message) => {
@@ -53,6 +53,16 @@ export function registerMessageCreateEvent(client: Client): void {
         return;
       }
 
+      // Sum command (check "sum paid" before "sum")
+      if (content.includes("sum paid")) {
+        await handleSum(message, client, true);
+        return;
+      }
+      if (content.includes("sum")) {
+        await handleSum(message, client, false);
+        return;
+      }
+
       // New receipt submission (bot mention + image attachment)
       if (
         message.attachments.some((a) => a.contentType?.startsWith("image/"))
@@ -72,8 +82,8 @@ export function registerMessageCreateEvent(client: Client): void {
   });
 }
 
-// Returns the ID of a tagged secondary user mentioned in the message if the
-// message author is the primary user. Used for proxy commands.
+// Returns a single proxy target for commands that act on behalf of one user
+// (claim, unclaim, split). Returns null if not applicable.
 function getProxyTarget(
   message: Message,
   session: ReceiptSession,
@@ -86,6 +96,20 @@ function getProxyTarget(
   const targetId = mentioned[0];
   if (!session.taggedUserIds.includes(targetId)) return null;
   return targetId;
+}
+
+// Returns all proxy targets for paid/unpaid, which can act on multiple users at once.
+function getProxyTargets(
+  message: Message,
+  session: ReceiptSession,
+): string[] | null {
+  if (message.author.id !== session.primaryUserId) return null;
+  const mentioned = message.mentions.users
+    .filter((u) => !u.bot && u.id !== message.author.id)
+    .map((u) => u.id)
+    .filter((id) => session.taggedUserIds.includes(id));
+  if (mentioned.length === 0) return null;
+  return mentioned;
 }
 
 async function getDisplayNameResolver(
@@ -155,6 +179,121 @@ async function handleLeaderboard(message: Message): Promise<void> {
   }
 
   await message.reply({ embeds: [embed] });
+}
+
+async function handleSum(
+  message: Message,
+  client: Client,
+  markPaid: boolean,
+): Promise<void> {
+  if (!message.guildId || !message.guild) {
+    await message.reply("The sum command is only available in servers.");
+    return;
+  }
+
+  const sessions = manager.getUnpaidSessionsForUser(
+    message.guildId,
+    message.author.id,
+  );
+
+  if (sessions.length === 0) {
+    await message.reply("You have no unpaid items across any active receipts.");
+    return;
+  }
+
+  const sessionData: { session: ReceiptSession; ut: UserTotal }[] = [];
+  for (const session of sessions) {
+    const userTotals = manager.getUserTotals(session);
+    const ut = userTotals.find((u) => u.userId === message.author.id);
+    if (ut) sessionData.push({ session, ut });
+  }
+
+  if (sessionData.length === 0) {
+    await message.reply("You have no unpaid items across any active receipts.");
+    return;
+  }
+
+  const grandTotal = sessionData.reduce((sum, d) => sum + d.ut.grandTotal, 0);
+
+  const lines = sessionData.map(
+    (d) => `**${d.session.restaurantName}** — $${d.ut.grandTotal.toFixed(2)}`,
+  );
+  lines.push(`\n**Grand Total: $${grandTotal.toFixed(2)}**`);
+
+  if (markPaid) {
+    for (const { session } of sessionData) {
+      manager.markUserPaid(session.id, message.author.id);
+    }
+
+    // Update each thread's summary and check for settlement
+    for (const { session } of sessionData) {
+      try {
+        const thread = await client.channels.fetch(session.threadId);
+        if (!thread || !thread.isThread()) continue;
+
+        const refreshedSession = manager.getSession(session.threadId);
+        if (!refreshedSession) continue;
+
+        const displayName = await buildDisplayNameResolver(
+          thread.guild,
+          refreshedSession.taggedUserIds,
+        );
+        const items = manager.getItems(session.id);
+        const userTotals = manager.getUserTotals(refreshedSession);
+        const payments = manager.getPaymentStatuses(session.id);
+        const splits = manager.getSplits(session.id);
+        const embeds = buildSummaryEmbeds(
+          refreshedSession,
+          items,
+          userTotals,
+          payments,
+          splits,
+          displayName,
+        );
+
+        if (session.summaryMessageId) {
+          try {
+            const summaryMsg = await thread.messages.fetch(
+              session.summaryMessageId,
+            );
+            await summaryMsg.edit({ embeds });
+          } catch {
+            const newMsg = await thread.send({ embeds });
+            manager.setSummaryMessageId(session.id, newMsg.id);
+          }
+        }
+
+        const { allPaid } = manager.checkAllClaimedAndPaid(refreshedSession);
+        if (allPaid) {
+          const primaryName = displayName(session.primaryUserId);
+          manager.recordSettlement(
+            session.guildId,
+            session.restaurantName,
+            userTotals,
+          );
+          await thread.send(
+            `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`,
+          );
+        }
+      } catch (err) {
+        console.error(`Failed to update thread for session ${session.id}:`, err);
+      }
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("✅ Marked as Paid")
+      .setColor(0x2ecc71)
+      .setDescription(lines.join("\n"));
+    await message.reply({ embeds: [embed] });
+  } else {
+    const embed = new EmbedBuilder()
+      .setTitle("💰 Your Unpaid Totals")
+      .setColor(0xe74c3c)
+      .setDescription(
+        lines.join("\n") + "\n\nReply `@bot sum paid` to mark all as paid.",
+      );
+    await message.reply({ embeds: [embed] });
+  }
 }
 
 async function handleNewReceipt(
@@ -244,7 +383,7 @@ async function handleNewReceipt(
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(
+  const embeds = buildSummaryEmbeds(
     session,
     lineItems,
     userTotals,
@@ -252,7 +391,7 @@ async function handleNewReceipt(
     splits,
     displayName,
   );
-  const summaryMsg = await thread.send({ embeds: [embed] });
+  const summaryMsg = await thread.send({ embeds });
   manager.setSummaryMessageId(session.id, summaryMsg.id);
 
   if (warning) {
@@ -305,12 +444,14 @@ async function handleThreadMessage(message: Message): Promise<void> {
   }
 
   if (contentClean === "paid" || contentClean === "done") {
-    await handlePaid(message, session, effectiveUserId);
+    const targets = getProxyTargets(message, session) ?? [message.author.id];
+    for (const t of targets) await handlePaid(message, session, t);
     return;
   }
 
   if (contentClean === "unpaid") {
-    await handleUnpaid(message, session, effectiveUserId);
+    const targets = getProxyTargets(message, session) ?? [message.author.id];
+    for (const t of targets) await handleUnpaid(message, session, t);
     return;
   }
 
@@ -531,7 +672,7 @@ async function handleStatus(
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(
+  const embeds = buildSummaryEmbeds(
     session,
     items,
     userTotals,
@@ -539,7 +680,7 @@ async function handleStatus(
     splits,
     displayName,
   );
-  await message.reply({ embeds: [embed] });
+  await message.reply({ embeds });
 }
 
 async function handleTipCommand(
@@ -625,7 +766,7 @@ async function updateSummaryMessage(
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(
+  const embeds = buildSummaryEmbeds(
     session,
     items,
     userTotals,
@@ -636,9 +777,9 @@ async function updateSummaryMessage(
 
   try {
     const summaryMsg = await thread.messages.fetch(session.summaryMessageId);
-    await summaryMsg.edit({ embeds: [embed] });
+    await summaryMsg.edit({ embeds });
   } catch {
-    const newMsg = await thread.send({ embeds: [embed] });
+    const newMsg = await thread.send({ embeds });
     manager.setSummaryMessageId(session.id, newMsg.id);
   }
 }

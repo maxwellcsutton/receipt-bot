@@ -2,14 +2,44 @@ import { EmbedBuilder } from "discord.js";
 import { ReceiptSession, LineItem, UserTotal, SplitEntry } from "./types.js";
 import { DisplayNameResolver } from "../utils/discord.js";
 
-export function buildSummaryEmbed(
+const INDENT = "\u2800"; // U+2800 braille blank — not stripped by Discord on first line
+const FIELD_LIMIT = 1024;
+
+// Splits lines across multiple fields on the same embed to stay within Discord's limit.
+function addChunkedFields(embed: EmbedBuilder, name: string, lines: string[]): void {
+  let chunk: string[] = [];
+  let chunkLen = 0;
+  let first = true;
+
+  const flush = () => {
+    if (chunk.length === 0) return;
+    embed.addFields({
+      name: first ? name : `${name} (cont.)`,
+      value: chunk.join("\n"),
+      inline: false,
+    });
+    first = false;
+    chunk = [];
+    chunkLen = 0;
+  };
+
+  for (const line of lines) {
+    const lineLen = line.length + 1;
+    if (chunkLen + lineLen > FIELD_LIMIT) flush();
+    chunk.push(line);
+    chunkLen += lineLen;
+  }
+  flush();
+}
+
+export function buildSummaryEmbeds(
   session: ReceiptSession,
   items: LineItem[],
   userTotals: UserTotal[],
   payments: { userId: string; paid: boolean }[],
   splits: SplitEntry[],
   displayName: DisplayNameResolver
-): EmbedBuilder {
+): EmbedBuilder[] {
   const paymentMap = new Map(payments.map((p) => [p.userId, p.paid]));
   const splitMap = new Map<number, SplitEntry[]>();
   for (const s of splits) {
@@ -19,106 +49,63 @@ export function buildSummaryEmbed(
 
   const unclaimed = items.filter((i) => !i.claimedByUserId);
   const allClaimed = unclaimed.length === 0;
-  const allPaid =
-    allClaimed && payments.length > 0 && payments.every((p) => p.paid);
+  const allPaid = allClaimed && payments.length > 0 && payments.every((p) => p.paid);
 
-  let color: number;
-  if (allPaid) {
-    color = 0x2ecc71; // green
-  } else if (allClaimed) {
-    color = 0xf1c40f; // yellow
-  } else {
-    color = 0xe74c3c; // red
-  }
+  const tipAmount = session.tipAmount ?? 0;
+  const tipStr = session.tipAmount !== null ? `$${tipAmount.toFixed(2)}` : "not set";
+  const computedTotal = session.subtotal + session.taxAmount + tipAmount;
+  const footerText = `Subtotal: $${session.subtotal.toFixed(2)} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`;
 
-  const embed = new EmbedBuilder()
+  const embeds: EmbedBuilder[] = [];
+
+  // Embed 1: header + unclaimed items
+  const headerEmbed = new EmbedBuilder()
     .setTitle(`🧾 ${session.restaurantName}`)
-    .setColor(color);
+    .setColor(allPaid ? 0x2ecc71 : allClaimed ? 0xf1c40f : 0xe74c3c)
+    .setFooter({ text: footerText });
 
-  // U+2800 braille blank: visually empty but not stripped by Discord embed rendering,
-  // ensuring all item lines (including the first) are indented consistently.
-  const INDENT = "\u2800";
-
-  // Splits a list of lines into one or more embed fields, each within Discord's
-  // 1024-character field value limit.
-  function addChunkedFields(name: string, lines: string[]): void {
-    const LIMIT = 1024;
-    let chunk: string[] = [];
-    let chunkLen = 0;
-    let first = true;
-
-    const flush = () => {
-      if (chunk.length === 0) return;
-      embed.addFields({
-        name: first ? name : `${name} (cont.)`,
-        value: chunk.join("\n"),
-        inline: false,
-      });
-      first = false;
-      chunk = [];
-      chunkLen = 0;
-    };
-
-    for (const line of lines) {
-      const lineLen = line.length + 1; // +1 for newline
-      if (chunkLen + lineLen > LIMIT) flush();
-      chunk.push(line);
-      chunkLen += lineLen;
-    }
-    flush();
-  }
-
-  // Unclaimed section
   if (unclaimed.length > 0) {
     const lines = unclaimed.map(
       (i) => `${INDENT}**${i.index}.** ${i.name} — $${i.unitPrice.toFixed(2)}`
     );
-    addChunkedFields("UNCLAIMED", lines);
+    addChunkedFields(headerEmbed, "UNCLAIMED", lines);
+  } else {
+    headerEmbed.setDescription("All items have been claimed.");
   }
 
-  // Claimed section per user
-  if (userTotals.length > 0) {
-    const claimedLines: string[] = [];
-    for (const ut of userTotals) {
-      const paid = paymentMap.get(ut.userId);
-      const statusIcon = paid ? "✅ PAID" : "❌ UNPAID";
-      const name = displayName(ut.userId);
-      claimedLines.push(
-        `**${name}** — $${ut.grandTotal.toFixed(2)} ${statusIcon}`
-      );
-      for (const item of ut.items) {
-        const itemSplits = splitMap.get(item.index);
-        let splitNote = "";
-        if (itemSplits && itemSplits.length > 1) {
-          const others = itemSplits
-            .filter((s) => s.userId !== ut.userId)
-            .map((s) => displayName(s.userId))
-            .join(", ");
-          splitNote = ` (split with ${others} — $${item.amount.toFixed(2)} each)`;
-        }
-        claimedLines.push(
-          `${INDENT}**${item.index}.** ${item.name} — $${item.amount.toFixed(2)}${splitNote}`
-        );
+  embeds.push(headerEmbed);
+
+  // One embed per user in the claimed list
+  for (const ut of userTotals) {
+    const paid = paymentMap.get(ut.userId);
+    const statusIcon = paid ? "✅ PAID" : "❌ UNPAID";
+    const name = displayName(ut.userId);
+
+    const userEmbed = new EmbedBuilder()
+      .setColor(paid ? 0x2ecc71 : 0xe74c3c)
+      .setTitle(`${name} — $${ut.grandTotal.toFixed(2)} ${statusIcon}`);
+
+    const itemLines = ut.items.map((item) => {
+      const itemSplits = splitMap.get(item.index);
+      let splitNote = "";
+      if (itemSplits && itemSplits.length > 1) {
+        const others = itemSplits
+          .filter((s) => s.userId !== ut.userId)
+          .map((s) => displayName(s.userId))
+          .join(", ");
+        splitNote = ` (split with ${others} — $${item.amount.toFixed(2)} each)`;
       }
-      claimedLines.push("");
-    }
-    addChunkedFields("CLAIMED", claimedLines.slice(0, -1)); // trim trailing blank
+      return `${INDENT}**${item.index}.** ${item.name} — $${item.amount.toFixed(2)}${splitNote}`;
+    });
+
+    addChunkedFields(userEmbed, "Items", itemLines);
+    embeds.push(userEmbed);
   }
 
-  // Footer with totals — compute dynamically so tip updates are reflected
-  const tipAmount = session.tipAmount ?? 0;
-  const tipStr = session.tipAmount !== null ? `$${tipAmount.toFixed(2)}` : "not set";
-  const computedTotal = session.subtotal + session.taxAmount + tipAmount;
-  embed.setFooter({
-    text: `Subtotal: $${session.subtotal.toFixed(2)} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`,
-  });
-
-  return embed;
+  return embeds;
 }
 
-export function formatItemList(
-  taggedUserIds: string[]
-): string {
+export function formatItemList(taggedUserIds: string[]): string {
   const header = taggedUserIds.map((id) => `<@${id}>`).join(" ");
   const commands = [
     "**Commands:**",

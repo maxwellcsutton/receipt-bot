@@ -370,6 +370,21 @@ export function checkDailyLimit(): void {
   }
 }
 
+export function getUnpaidSessionsForUser(
+  guildId: string,
+  userId: string
+): ReceiptSession[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT rs.* FROM receipt_sessions rs
+       JOIN user_payments up ON up.session_id = rs.id
+       WHERE rs.guild_id = ? AND rs.status != 'settled' AND up.user_id = ? AND up.paid = 0`
+    )
+    .all(guildId, userId) as any[];
+  return rows.map(rowToSession);
+}
+
 // --- Helpers ---
 
 function rowToSession(row: any): ReceiptSession {
