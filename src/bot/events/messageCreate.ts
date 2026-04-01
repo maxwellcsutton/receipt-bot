@@ -8,7 +8,11 @@ import {
 } from "discord.js";
 import { randomUUID } from "crypto";
 import { config } from "../../config.js";
-import { parseReceiptImage, expandLineItems, validateReceipt } from "../../receipt/parser.js";
+import {
+  parseReceiptImage,
+  expandLineItems,
+  validateReceipt,
+} from "../../receipt/parser.js";
 import {
   buildSummaryEmbed,
   formatItemList,
@@ -50,14 +54,16 @@ export function registerMessageCreateEvent(client: Client): void {
       }
 
       // New receipt submission (bot mention + image attachment)
-      if (message.attachments.some((a) => a.contentType?.startsWith("image/"))) {
+      if (
+        message.attachments.some((a) => a.contentType?.startsWith("image/"))
+      ) {
         await handleNewReceipt(message, client);
       }
     } catch (err) {
       console.error("Error handling message:", err);
       try {
         await message.reply(
-          `An error occurred: ${err instanceof Error ? err.message : "Unknown error"}`
+          `OOPSIE WOOPSIE!! Uwu We make a fucky wucky!! A wittle fucko boingo! The code monkeys at our headquarters are working VEWY HAWD to fix this!`,
         );
       } catch {
         // ignore reply failure
@@ -68,7 +74,10 @@ export function registerMessageCreateEvent(client: Client): void {
 
 // Returns the ID of a tagged secondary user mentioned in the message if the
 // message author is the primary user. Used for proxy commands.
-function getProxyTarget(message: Message, session: ReceiptSession): string | null {
+function getProxyTarget(
+  message: Message,
+  session: ReceiptSession,
+): string | null {
   if (message.author.id !== session.primaryUserId) return null;
   const mentioned = message.mentions.users
     .filter((u) => !u.bot && u.id !== message.author.id)
@@ -79,7 +88,10 @@ function getProxyTarget(message: Message, session: ReceiptSession): string | nul
   return targetId;
 }
 
-async function getDisplayNameResolver(message: Message, session: ReceiptSession): Promise<DisplayNameResolver> {
+async function getDisplayNameResolver(
+  message: Message,
+  session: ReceiptSession,
+): Promise<DisplayNameResolver> {
   const guild = message.guild;
   if (!guild) return (id: string) => `<@${id}>`;
 
@@ -109,9 +121,10 @@ async function handleLeaderboard(message: Message): Promise<void> {
 
   const guild = message.guild!;
   const userIds = users.map((u) => u.userId);
-  const displayName = userIds.length > 0
-    ? await buildDisplayNameResolver(guild, userIds)
-    : (_id: string) => "Unknown";
+  const displayName =
+    userIds.length > 0
+      ? await buildDisplayNameResolver(guild, userIds)
+      : (_id: string) => "Unknown";
 
   const embed = new EmbedBuilder()
     .setTitle("🏆 Receipt Leaderboard")
@@ -120,24 +133,36 @@ async function handleLeaderboard(message: Message): Promise<void> {
   if (restaurants.length > 0) {
     const lines = restaurants.map(
       (r, i) =>
-        `${i + 1}. **${r.restaurantName}** — $${r.totalSpend.toFixed(2)} (${r.receiptCount} receipt${r.receiptCount !== 1 ? "s" : ""})`
+        `${i + 1}. **${r.restaurantName}** — $${r.totalSpend.toFixed(2)} (${r.receiptCount} receipt${r.receiptCount !== 1 ? "s" : ""})`,
     );
-    embed.addFields({ name: "Top Restaurants by Spend", value: lines.join("\n"), inline: false });
+    embed.addFields({
+      name: "Top Restaurants by Spend",
+      value: lines.join("\n"),
+      inline: false,
+    });
   }
 
   if (users.length > 0) {
     const lines = users.map(
-      (u, i) => `${i + 1}. **${displayName(u.userId)}** — $${u.totalSpend.toFixed(2)}`
+      (u, i) =>
+        `${i + 1}. **${displayName(u.userId)}** — $${u.totalSpend.toFixed(2)}`,
     );
-    embed.addFields({ name: "Top Spenders", value: lines.join("\n"), inline: false });
+    embed.addFields({
+      name: "Top Spenders",
+      value: lines.join("\n"),
+      inline: false,
+    });
   }
 
   await message.reply({ embeds: [embed] });
 }
 
-async function handleNewReceipt(message: Message, client: Client): Promise<void> {
+async function handleNewReceipt(
+  message: Message,
+  client: Client,
+): Promise<void> {
   const attachment = message.attachments.find((a) =>
-    a.contentType?.startsWith("image/")
+    a.contentType?.startsWith("image/"),
   );
   if (!attachment) {
     await message.reply("Please include a receipt image in your message.");
@@ -146,7 +171,9 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
 
   const mediaType = getImageMediaType(attachment.contentType);
   if (!mediaType) {
-    await message.reply("Unsupported image format. Please use JPEG, PNG, GIF, or WebP.");
+    await message.reply(
+      "Unsupported image format. Please use JPEG, PNG, GIF, or WebP.",
+    );
     return;
   }
 
@@ -155,14 +182,19 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
     .map((u) => u.id);
 
   if (taggedUserIds.length === 0) {
-    await message.reply("Please tag at least one other user to split the receipt with.");
+    await message.reply(
+      "Please tag at least one other user to split the receipt with.",
+    );
     return;
   }
 
   // Check daily API spend limit before calling Claude
   manager.checkDailyLimit();
 
-  const restaurantName = extractRestaurantName(message.content, client.user!.id);
+  const restaurantName = extractRestaurantName(
+    message.content,
+    client.user!.id,
+  );
 
   await message.react("⏳");
 
@@ -170,7 +202,10 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
   const buffer = Buffer.from(await response.arrayBuffer());
   const imageBase64 = buffer.toString("base64");
 
-  const { parsed, estimatedCostUsd } = await parseReceiptImage(imageBase64, mediaType);
+  const { parsed, estimatedCostUsd } = await parseReceiptImage(
+    imageBase64,
+    mediaType,
+  );
 
   manager.logApiCost(estimatedCostUsd);
 
@@ -209,7 +244,14 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(session, lineItems, userTotals, payments, splits, displayName);
+  const embed = buildSummaryEmbed(
+    session,
+    lineItems,
+    userTotals,
+    payments,
+    splits,
+    displayName,
+  );
   const summaryMsg = await thread.send({ embeds: [embed] });
   manager.setSummaryMessageId(session.id, summaryMsg.id);
 
@@ -219,7 +261,7 @@ async function handleNewReceipt(message: Message, client: Client): Promise<void>
 
   if (parsed.tip === null || parsed.tip === 0) {
     await thread.send(
-      "No tip detected on the receipt. The primary user can reply `tip 20%` or `tip 15.00` to add a tip, or `tip 0` to skip."
+      "No tip detected on the receipt. The primary user can reply `tip 20%` or `tip 15.00` to add a tip, or `tip 0` to skip.",
     );
   }
 
@@ -238,7 +280,10 @@ async function handleThreadMessage(message: Message): Promise<void> {
   }
 
   // Strip mentions from content so proxy commands parse cleanly
-  const contentClean = message.content.replace(/<@!?\d+>/g, "").trim().toLowerCase();
+  const contentClean = message.content
+    .replace(/<@!?\d+>/g, "")
+    .trim()
+    .toLowerCase();
 
   // Proxy target: if primary user tags a secondary user, act on their behalf
   const proxyTarget = getProxyTarget(message, session);
@@ -294,18 +339,20 @@ async function handleClaim(
   message: Message,
   session: ReceiptSession,
   itemNumbers: number[],
-  targetUserId: string
+  targetUserId: string,
 ): Promise<void> {
   try {
     manager.claimItems(session.id, itemNumbers, targetUserId);
   } catch (err) {
     await message.reply(
-      err instanceof Error ? err.message : "Failed to claim items."
+      err instanceof Error ? err.message : "Failed to claim items.",
     );
     return;
   }
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   const displayName = await getDisplayNameResolver(message, refreshedSession);
   const userTotals = manager.getUserTotals(refreshedSession);
   const ut = userTotals.find((u) => u.userId === targetUserId);
@@ -323,11 +370,13 @@ async function handleUnclaim(
   message: Message,
   session: ReceiptSession,
   contentClean: string,
-  targetUserId: string
+  targetUserId: string,
 ): Promise<void> {
   const numbers = parseItemNumbers(contentClean.slice("unclaim ".length));
   if (numbers.length === 0) {
-    await message.reply("Please specify item numbers to unclaim (e.g. `unclaim 1 3`).");
+    await message.reply(
+      "Please specify item numbers to unclaim (e.g. `unclaim 1 3`).",
+    );
     return;
   }
 
@@ -335,24 +384,29 @@ async function handleUnclaim(
     manager.unclaimItems(session.id, numbers, targetUserId);
   } catch (err) {
     await message.reply(
-      err instanceof Error ? err.message : "Failed to unclaim items."
+      err instanceof Error ? err.message : "Failed to unclaim items.",
     );
     return;
   }
 
   await message.reply(`Unclaimed items: ${numbers.join(", ")}`);
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   await updateSummaryMessage(message, refreshedSession);
 }
 
 async function handleSplit(
   message: Message,
   session: ReceiptSession,
-  effectiveUserId: string
+  effectiveUserId: string,
 ): Promise<void> {
   // Parse item index — strip mentions first since they may contain numbers
-  const parts = message.content.replace(/<@!?\d+>/g, "").trim().split(/\s+/);
+  const parts = message.content
+    .replace(/<@!?\d+>/g, "")
+    .trim()
+    .split(/\s+/);
   const itemIndex = parseInt(parts[1], 10);
   if (isNaN(itemIndex)) {
     await message.reply("Usage: `split <item number> @user1 @user2`");
@@ -363,10 +417,15 @@ async function handleSplit(
     .filter((u) => !u.bot)
     .map((u) => u.id);
   // effectiveUserId is the acting participant; add all other mentions, deduped
-  const allUserIds = [effectiveUserId, ...mentionedIds.filter((id) => id !== effectiveUserId)];
+  const allUserIds = [
+    effectiveUserId,
+    ...mentionedIds.filter((id) => id !== effectiveUserId),
+  ];
 
   if (allUserIds.length < 2) {
-    await message.reply("Please mention at least one other user to split the item with.");
+    await message.reply(
+      "Please mention at least one other user to split the item with.",
+    );
     return;
   }
 
@@ -374,7 +433,7 @@ async function handleSplit(
     manager.splitItem(session.id, itemIndex, allUserIds);
   } catch (err) {
     await message.reply(
-      err instanceof Error ? err.message : "Failed to split item."
+      err instanceof Error ? err.message : "Failed to split item.",
     );
     return;
   }
@@ -382,24 +441,32 @@ async function handleSplit(
   const displayName = await getDisplayNameResolver(message, session);
   const items = manager.getItems(session.id);
   const item = items.find((i) => i.index === itemIndex);
-  const perPerson = item ? (item.unitPrice / allUserIds.length).toFixed(2) : "?";
+  const perPerson = item
+    ? (item.unitPrice / allUserIds.length).toFixed(2)
+    : "?";
   const names = allUserIds.map((id) => displayName(id)).join(", ");
-  await message.reply(`Item ${itemIndex} split between ${names} — $${perPerson} each.`);
+  await message.reply(
+    `Item ${itemIndex} split between ${names} — $${perPerson} each.`,
+  );
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   await updateSummaryMessage(message, refreshedSession);
 }
 
 async function handleUnpaid(
   message: Message,
   session: ReceiptSession,
-  targetUserId: string
+  targetUserId: string,
 ): Promise<void> {
   const payments = manager.getPaymentStatuses(session.id);
   const userPayment = payments.find((p) => p.userId === targetUserId);
 
   if (!userPayment) {
-    await message.reply("That user doesn't have any claimed items on this receipt.");
+    await message.reply(
+      "That user doesn't have any claimed items on this receipt.",
+    );
     return;
   }
 
@@ -413,13 +480,15 @@ async function handleUnpaid(
   const displayName = await getDisplayNameResolver(message, session);
   await message.reply(`${displayName(targetUserId)} marked as unpaid.`);
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   await updateSummaryMessage(message, refreshedSession);
 }
 
 async function handleAddUser(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
 ): Promise<void> {
   if (message.author.id !== session.primaryUserId) {
     await message.reply("Only the primary user can add new users.");
@@ -431,7 +500,9 @@ async function handleAddUser(
     .map((u) => u.id);
 
   if (newUsers.length === 0) {
-    await message.reply("No new users to add. Make sure you @mention users not already in this receipt.");
+    await message.reply(
+      "No new users to add. Make sure you @mention users not already in this receipt.",
+    );
     return;
   }
 
@@ -439,31 +510,42 @@ async function handleAddUser(
     manager.addUserToSession(session.id, userId);
   }
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   const displayName = await getDisplayNameResolver(message, refreshedSession);
   const names = newUsers.map((id) => displayName(id)).join(", ");
-  await message.reply(`Added ${names} to the receipt. They can now claim items.`);
+  await message.reply(
+    `Added ${names} to the receipt. They can now claim items.`,
+  );
 
   await updateSummaryMessage(message, refreshedSession);
 }
 
 async function handleStatus(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
 ): Promise<void> {
   const displayName = await getDisplayNameResolver(message, session);
   const items = manager.getItems(session.id);
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(session, items, userTotals, payments, splits, displayName);
+  const embed = buildSummaryEmbed(
+    session,
+    items,
+    userTotals,
+    payments,
+    splits,
+    displayName,
+  );
   await message.reply({ embeds: [embed] });
 }
 
 async function handleTipCommand(
   message: Message,
   session: ReceiptSession,
-  contentClean: string
+  contentClean: string,
 ): Promise<void> {
   if (message.author.id !== session.primaryUserId) {
     await message.reply("Only the primary user can set the tip.");
@@ -483,7 +565,9 @@ async function handleTipCommand(
   } else {
     tipAmount = parseFloat(tipStr);
     if (isNaN(tipAmount)) {
-      await message.reply("Invalid tip amount. Use e.g. `tip 15.00` or `tip 20%`.");
+      await message.reply(
+        "Invalid tip amount. Use e.g. `tip 15.00` or `tip 20%`.",
+      );
       return;
     }
   }
@@ -491,20 +575,24 @@ async function handleTipCommand(
   manager.setTip(session.id, tipAmount);
   await message.reply(`Tip set to $${tipAmount.toFixed(2)}.`);
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   await updateSummaryMessage(message, refreshedSession);
 }
 
 async function handlePaid(
   message: Message,
   session: ReceiptSession,
-  targetUserId: string
+  targetUserId: string,
 ): Promise<void> {
   const payments = manager.getPaymentStatuses(session.id);
   const userPayment = payments.find((p) => p.userId === targetUserId);
 
   if (!userPayment) {
-    await message.reply("That user doesn't have any claimed items on this receipt.");
+    await message.reply(
+      "That user doesn't have any claimed items on this receipt.",
+    );
     return;
   }
 
@@ -518,14 +606,16 @@ async function handlePaid(
   const displayName = await getDisplayNameResolver(message, session);
   await message.reply(`${displayName(targetUserId)} marked as paid! ✅`);
 
-  const refreshedSession = manager.getSession((message.channel as ThreadChannel).id)!;
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
   await updateSummaryMessage(message, refreshedSession);
   await checkAndNotify(message, refreshedSession);
 }
 
 async function updateSummaryMessage(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
 ): Promise<void> {
   if (!session.summaryMessageId) return;
 
@@ -535,7 +625,14 @@ async function updateSummaryMessage(
   const userTotals = manager.getUserTotals(session);
   const payments = manager.getPaymentStatuses(session.id);
   const splits = manager.getSplits(session.id);
-  const embed = buildSummaryEmbed(session, items, userTotals, payments, splits, displayName);
+  const embed = buildSummaryEmbed(
+    session,
+    items,
+    userTotals,
+    payments,
+    splits,
+    displayName,
+  );
 
   try {
     const summaryMsg = await thread.messages.fetch(session.summaryMessageId);
@@ -548,7 +645,7 @@ async function updateSummaryMessage(
 
 async function checkAndNotify(
   message: Message,
-  session: ReceiptSession
+  session: ReceiptSession,
 ): Promise<void> {
   const { allClaimed, allPaid } = manager.checkAllClaimedAndPaid(session);
   const thread = message.channel as ThreadChannel;
@@ -558,17 +655,21 @@ async function checkAndNotify(
     const primaryName = displayName(session.primaryUserId);
 
     const userTotals = manager.getUserTotals(session);
-    manager.recordSettlement(session.guildId, session.restaurantName, userTotals);
+    manager.recordSettlement(
+      session.guildId,
+      session.restaurantName,
+      userTotals,
+    );
 
     await thread.send(
-      `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`
+      `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`,
     );
   } else if (!allClaimed) {
     const items = manager.getItems(session.id);
     const unclaimed = items.filter((i) => !i.claimedByUserId);
     if (unclaimed.length > 0) {
       const claimants = new Set(
-        items.filter((i) => i.claimedByUserId).map((i) => i.claimedByUserId!)
+        items.filter((i) => i.claimedByUserId).map((i) => i.claimedByUserId!),
       );
       const allTaggedHaveClaimed = session.taggedUserIds
         .filter((id) => id !== session.primaryUserId)
@@ -577,7 +678,7 @@ async function checkAndNotify(
       if (allTaggedHaveClaimed && !claimants.has(session.primaryUserId)) {
         const unclaimedNums = unclaimed.map((i) => i.index).join(", ");
         await thread.send(
-          `Items ${unclaimedNums} are still unclaimed. <@${session.primaryUserId}>, who do these belong to?`
+          `Items ${unclaimedNums} are still unclaimed. <@${session.primaryUserId}>, who do these belong to?`,
         );
       }
     }

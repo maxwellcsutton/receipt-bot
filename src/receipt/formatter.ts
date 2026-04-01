@@ -39,16 +39,41 @@ export function buildSummaryEmbed(
   // ensuring all item lines (including the first) are indented consistently.
   const INDENT = "\u2800";
 
+  // Splits a list of lines into one or more embed fields, each within Discord's
+  // 1024-character field value limit.
+  function addChunkedFields(name: string, lines: string[]): void {
+    const LIMIT = 1024;
+    let chunk: string[] = [];
+    let chunkLen = 0;
+    let first = true;
+
+    const flush = () => {
+      if (chunk.length === 0) return;
+      embed.addFields({
+        name: first ? name : `${name} (cont.)`,
+        value: chunk.join("\n"),
+        inline: false,
+      });
+      first = false;
+      chunk = [];
+      chunkLen = 0;
+    };
+
+    for (const line of lines) {
+      const lineLen = line.length + 1; // +1 for newline
+      if (chunkLen + lineLen > LIMIT) flush();
+      chunk.push(line);
+      chunkLen += lineLen;
+    }
+    flush();
+  }
+
   // Unclaimed section
   if (unclaimed.length > 0) {
     const lines = unclaimed.map(
       (i) => `${INDENT}**${i.index}.** ${i.name} — $${i.unitPrice.toFixed(2)}`
     );
-    embed.addFields({
-      name: "UNCLAIMED",
-      value: lines.join("\n"),
-      inline: false,
-    });
+    addChunkedFields("UNCLAIMED", lines);
   }
 
   // Claimed section per user
@@ -77,11 +102,7 @@ export function buildSummaryEmbed(
       }
       claimedLines.push("");
     }
-    embed.addFields({
-      name: "CLAIMED",
-      value: claimedLines.join("\n").trim(),
-      inline: false,
-    });
+    addChunkedFields("CLAIMED", claimedLines.slice(0, -1)); // trim trailing blank
   }
 
   // Footer with totals — compute dynamically so tip updates are reflected
