@@ -38,7 +38,7 @@ export function registerMessageCreateEvent(client: Client): void {
         message.channel.type === ChannelType.PublicThread ||
         message.channel.type === ChannelType.PrivateThread
       ) {
-        await handleThreadMessage(message);
+        await handleThreadMessage(message, client);
         return;
       }
 
@@ -275,6 +275,15 @@ async function handleSum(
             `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`,
           );
         }
+
+        // Remove user from thread (self-initiated payment, not primary user of this session)
+        if (message.author.id !== session.primaryUserId) {
+          try {
+            await thread.members.remove(message.author.id);
+          } catch {
+            // ignore
+          }
+        }
       } catch (err) {
         console.error(`Failed to update thread for session ${session.id}:`, err);
       }
@@ -408,7 +417,7 @@ async function handleNewReceipt(
   await message.react("✅");
 }
 
-async function handleThreadMessage(message: Message): Promise<void> {
+async function handleThreadMessage(message: Message, client: Client): Promise<void> {
   const thread = message.channel as ThreadChannel;
   const session = manager.getSession(thread.id);
   if (!session) return;
@@ -427,6 +436,16 @@ async function handleThreadMessage(message: Message): Promise<void> {
   // Proxy target: if primary user tags a secondary user, act on their behalf
   const proxyTarget = getProxyTarget(message, session);
   const effectiveUserId = proxyTarget ?? message.author.id;
+
+  if (contentClean === "sum paid") {
+    await handleSum(message, client, true);
+    return;
+  }
+
+  if (contentClean === "sum") {
+    await handleSum(message, client, false);
+    return;
+  }
 
   if (contentClean.startsWith("tip ")) {
     await handleTipCommand(message, session, contentClean);
@@ -752,6 +771,19 @@ async function handlePaid(
   )!;
   await updateSummaryMessage(message, refreshedSession);
   await checkAndNotify(message, refreshedSession);
+
+  // Only remove user if they marked themselves paid (not via proxy) and aren't the primary user
+  if (
+    targetUserId === message.author.id &&
+    targetUserId !== session.primaryUserId
+  ) {
+    const thread = message.channel as ThreadChannel;
+    try {
+      await thread.members.remove(targetUserId);
+    } catch {
+      // ignore — bot may lack permission or user already left
+    }
+  }
 }
 
 async function updateSummaryMessage(
