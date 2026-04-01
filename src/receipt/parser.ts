@@ -60,9 +60,15 @@ export async function parseReceiptImage(
             type: "text",
             text: `Extract all line items from this receipt as individual units.
 
-CRITICAL RULE: If an item has quantity > 1, list it as SEPARATE entries — one entry per unit.
-Example: "3x Mild Spicy Lamb $40.50" → three items: {"name":"Mild Spicy Lamb","unit_price":13.50}, {"name":"Mild Spicy Lamb","unit_price":13.50}, {"name":"Mild Spicy Lamb","unit_price":13.50}
-Never use a quantity field — every item in your response must represent exactly one unit.
+QUANTITY RULE — this is the most important rule:
+- Receipts have a leftmost numeric column that is the quantity ordered. That number is the ONLY source of truth for quantity.
+- Numbers that appear INSIDE item names (e.g. in parentheses like "Lamb Kebab(5)" or "Mushroom(1)") describe the item itself (e.g. pieces per skewer). They are NOT the quantity. Ignore them entirely when determining quantity.
+- unit_price = line total ÷ left-column quantity. Do the division — never copy the line total as the unit price.
+
+EXPANSION RULE:
+- Every item in your response represents exactly one unit. Never use a quantity field.
+- If the left-column quantity is N, output N separate entries each with unit_price = line_total / N.
+- Example: left column shows 3, item name "Mild Spicy Lamb Kebab(5)", line total $40.50 → three entries: {"name":"Mild Spicy Lamb Kebab","unit_price":13.50} × 3
 
 Also extract:
 - subtotal: sum of all item prices before tax and tip
