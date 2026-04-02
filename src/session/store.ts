@@ -12,9 +12,9 @@ export function createSession(session: ReceiptSession, items: LineItem[]): void 
   const db = getDb();
   const insertSession = db.prepare(`
     INSERT INTO receipt_sessions (id, thread_id, original_message_id, channel_id, guild_id,
-      primary_user_id, restaurant_name, subtotal, tax_amount, tip_amount, total, status,
+      primary_user_id, restaurant_name, subtotal, discount_amount, tax_amount, tip_amount, total, status,
       summary_message_id, tagged_user_ids, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertItem = db.prepare(`
     INSERT INTO line_items (session_id, item_index, name, unit_price, original_quantity, claimed_by_user_id)
@@ -31,6 +31,7 @@ export function createSession(session: ReceiptSession, items: LineItem[]): void 
       session.primaryUserId,
       session.restaurantName,
       session.subtotal,
+      session.discountAmount,
       session.taxAmount,
       session.tipAmount,
       session.total,
@@ -397,6 +398,7 @@ function rowToSession(row: any): ReceiptSession {
     primaryUserId: row.primary_user_id,
     restaurantName: row.restaurant_name,
     subtotal: row.subtotal,
+    discountAmount: row.discount_amount ?? 0,
     taxAmount: row.tax_amount,
     tipAmount: row.tip_amount,
     total: row.total,

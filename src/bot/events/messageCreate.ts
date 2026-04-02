@@ -374,6 +374,7 @@ async function handleNewReceipt(
     primaryUserId: message.author.id,
     restaurantName,
     subtotal: parsed.subtotal,
+    discountAmount: parsed.discount,
     taxAmount: parsed.tax,
     tipAmount: parsed.tip,
     total: parsed.total,
@@ -437,55 +438,56 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
   const proxyTarget = getProxyTarget(message, session);
   const effectiveUserId = proxyTarget ?? message.author.id;
 
-  if (contentClean === "sum paid") {
+  if (contentClean === "sum paid" || contentClean === "sp") {
     await handleSum(message, client, true);
     return;
   }
 
-  if (contentClean === "sum") {
+  if (contentClean === "sum" || contentClean === "sm") {
     await handleSum(message, client, false);
     return;
   }
 
-  if (contentClean.startsWith("tip ")) {
+  if (contentClean.startsWith("tip ") || contentClean.startsWith("t ")) {
     await handleTipCommand(message, session, contentClean);
     return;
   }
 
-  if (contentClean.startsWith("unclaim ")) {
+  if (contentClean.startsWith("unclaim ") || contentClean.startsWith("uc ")) {
     await handleUnclaim(message, session, contentClean, effectiveUserId);
     return;
   }
 
-  if (contentClean.startsWith("split ")) {
+  if (contentClean.startsWith("split ") || contentClean.startsWith("s ")) {
     await handleSplit(message, session, effectiveUserId);
     return;
   }
 
-  if (contentClean === "paid" || contentClean === "done") {
+  if (contentClean === "paid" || contentClean === "done" || contentClean === "p") {
     const targets = getProxyTargets(message, session) ?? [message.author.id];
     for (const t of targets) await handlePaid(message, session, t);
     return;
   }
 
-  if (contentClean === "unpaid") {
+  if (contentClean === "unpaid" || contentClean === "up") {
     const targets = getProxyTargets(message, session) ?? [message.author.id];
     for (const t of targets) await handleUnpaid(message, session, t);
     return;
   }
 
-  if (contentClean === "status") {
+  if (contentClean === "status" || contentClean === "st") {
     await handleStatus(message, session);
     return;
   }
 
-  if (contentClean.startsWith("adduser ")) {
+  if (contentClean.startsWith("adduser ") || contentClean.startsWith("au ")) {
     await handleAddUser(message, session);
     return;
   }
 
-  if (contentClean.startsWith("claim ") || contentClean === "claim") {
-    const numbers = parseItemNumbers(contentClean.slice("claim".length));
+  if (contentClean.startsWith("claim ") || contentClean === "claim" || contentClean.startsWith("c ") || contentClean === "c") {
+    const prefix = contentClean.startsWith("claim") ? "claim" : "c";
+    const numbers = parseItemNumbers(contentClean.slice(prefix.length));
     if (numbers.length === 0) {
       await message.reply("Please specify item numbers (e.g. `claim 1 3 5`).");
       return;
@@ -532,7 +534,8 @@ async function handleUnclaim(
   contentClean: string,
   targetUserId: string,
 ): Promise<void> {
-  const numbers = parseItemNumbers(contentClean.slice("unclaim ".length));
+  const ucPrefix = contentClean.startsWith("unclaim ") ? "unclaim " : "uc ";
+  const numbers = parseItemNumbers(contentClean.slice(ucPrefix.length));
   if (numbers.length === 0) {
     await message.reply(
       "Please specify item numbers to unclaim (e.g. `unclaim 1 3`).",
@@ -712,7 +715,8 @@ async function handleTipCommand(
     return;
   }
 
-  const tipStr = contentClean.slice("tip ".length).trim();
+  const prefix = contentClean.startsWith("tip ") ? "tip " : "t ";
+  const tipStr = contentClean.slice(prefix.length).trim();
   let tipAmount: number;
 
   if (tipStr.endsWith("%")) {

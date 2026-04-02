@@ -53,8 +53,10 @@ export function buildSummaryEmbeds(
 
   const tipAmount = session.tipAmount ?? 0;
   const tipStr = session.tipAmount !== null ? `$${tipAmount.toFixed(2)}` : "not set";
-  const computedTotal = session.subtotal + session.taxAmount + tipAmount;
-  const footerText = `Subtotal: $${session.subtotal.toFixed(2)} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`;
+  const discountAmount = session.discountAmount ?? 0;
+  const computedTotal = session.subtotal - discountAmount + session.taxAmount + tipAmount;
+  const discountStr = discountAmount > 0 ? ` | Discount: -$${discountAmount.toFixed(2)}` : "";
+  const footerText = `Subtotal: $${session.subtotal.toFixed(2)}${discountStr} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`;
 
   const embeds: EmbedBuilder[] = [];
 
@@ -109,15 +111,16 @@ export function formatItemList(taggedUserIds: string[]): string {
   const header = taggedUserIds.map((id) => `<@${id}>`).join(" ");
   const commands = [
     "**Commands:**",
-    "`claim 1 3 5` — claim items by number",
-    "`unclaim 1 3` — release claimed items",
-    "`split 3 @user1 @user2` — split an item between users",
-    "`tip 20%` or `tip 15.00` — set tip (primary user only)",
-    "`tip 0` — skip tip",
-    "`paid` — mark yourself as paid",
-    "`unpaid` — mark yourself as unpaid",
-    "`status` — show current claim status",
-    "`adduser @user` — add a new user to the receipt (primary user only)",
+    "`claim 1 3 5` / `c 1 3 5` — claim items by number",
+    "`unclaim 1 3` / `uc 1 3` — release claimed items",
+    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split an item between users",
+    "`tip 20%` / `t 20%` — set tip (primary user only)",
+    "`paid` / `p` — mark yourself as paid",
+    "`unpaid` / `up` — mark yourself as unpaid",
+    "`status` / `st` — show current claim status",
+    "`sum` / `sm` — show your unpaid totals across all receipts",
+    "`sum paid` / `sp` — mark all your unpaid items as paid",
+    "`adduser @user` / `au @user` — add a new user to the receipt (primary user only)",
     "_(Primary user: add @user to any command to act on their behalf)_",
   ].join("\n");
 

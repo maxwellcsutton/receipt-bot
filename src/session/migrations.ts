@@ -31,6 +31,7 @@ export function initDatabase(): void {
       primary_user_id TEXT NOT NULL,
       restaurant_name TEXT NOT NULL,
       subtotal REAL NOT NULL,
+      discount_amount REAL NOT NULL DEFAULT 0,
       tax_amount REAL NOT NULL,
       tip_amount REAL,
       total REAL NOT NULL,
@@ -88,4 +89,14 @@ export function initDatabase(): void {
       estimated_cost_usd REAL NOT NULL DEFAULT 0
     );
   `);
+
+  // Migration: add discount_amount to existing databases that pre-date this column
+  const cols = db
+    .prepare("PRAGMA table_info(receipt_sessions)")
+    .all() as { name: string }[];
+  if (!cols.some((c) => c.name === "discount_amount")) {
+    db.exec(
+      "ALTER TABLE receipt_sessions ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0"
+    );
+  }
 }

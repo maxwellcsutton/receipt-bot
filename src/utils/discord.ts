@@ -11,16 +11,31 @@ export function parseItemNumbers(text: string): number[] {
   return numbers.sort((a, b) => a - b);
 }
 
-export function extractRestaurantName(
-  content: string,
-  botId: string
-): string {
+// Maps normalized aliases to canonical restaurant names.
+// Keys must be lowercase for case-insensitive matching.
+const RESTAURANT_ALIASES: Record<string, string> = {
+  // T Kebob
+  tk: "T Kebob",
+  tkebab: "T Kebob",
+  "t kebab": "T Kebob",
+  "t kebob": "T Kebob",
+  // SunNongDan
+  snd: "SunNongDan",
+  // BCD
+  bcd: "BCD",
+  // Chubby Cattle
+  chubby: "Chubby Cattle",
+  "chubby cattle": "Chubby Cattle",
+};
+
+export function extractRestaurantName(content: string, botId: string): string {
   // Remove mentions and trim
-  let name = content
-    .replace(/<@!?\d+>/g, "")
-    .trim();
-  // If empty, use a default
-  return name || "Receipt";
+  const name = content.replace(/<@!?\d+>/g, "").trim();
+
+  if (!name) return "Receipt";
+
+  const canonical = RESTAURANT_ALIASES[name.toLowerCase()];
+  return canonical ?? name;
 }
 
 import { Guild } from "discord.js";
@@ -29,7 +44,7 @@ export type DisplayNameResolver = (userId: string) => string;
 
 export async function buildDisplayNameResolver(
   guild: Guild,
-  userIds: string[]
+  userIds: string[],
 ): Promise<DisplayNameResolver> {
   const nameMap = new Map<string, string>();
   for (const id of userIds) {
@@ -45,7 +60,7 @@ export async function buildDisplayNameResolver(
 }
 
 export function getImageMediaType(
-  contentType: string | null
+  contentType: string | null,
 ): "image/jpeg" | "image/png" | "image/gif" | "image/webp" | null {
   if (!contentType) return null;
   const type = contentType.toLowerCase();

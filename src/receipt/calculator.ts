@@ -61,7 +61,8 @@ export function calculateUserTotals(
 
   for (const [userId, itemsList] of userItems) {
     const itemsTotal = userTotalsMap.get(userId) || 0;
-    const share = session.subtotal > 0 ? itemsTotal / session.subtotal : 0;
+    const effectiveSubtotal = session.subtotal - (session.discountAmount ?? 0);
+    const share = effectiveSubtotal > 0 ? itemsTotal / effectiveSubtotal : 0;
     const taxShare = Math.round(session.taxAmount * share * 100) / 100;
     const tipShare = Math.round(tipAmount * share * 100) / 100;
     const grandTotal =

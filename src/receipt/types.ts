@@ -8,6 +8,7 @@ export interface ParsedReceiptItem {
 export interface ParsedReceipt {
   items: ParsedReceiptItem[];
   subtotal: number;
+  discount: number;
   tax: number;
   tip: number | null;
   total: number;
@@ -39,6 +40,7 @@ export interface ReceiptSession {
   primaryUserId: string;
   restaurantName: string;
   subtotal: number;
+  discountAmount: number;
   taxAmount: number;
   tipAmount: number | null;
   total: number;

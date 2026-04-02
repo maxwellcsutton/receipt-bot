@@ -31,11 +31,12 @@ const RECEIPT_SCHEMA = {
       items: RAW_ITEM_SCHEMA,
     },
     subtotal: { type: "number" as const },
+    discount: { type: "number" as const },
     tax: { type: "number" as const },
     tip: { type: ["number", "null"] as const },
     total: { type: "number" as const },
   },
-  required: ["items", "subtotal", "tax", "tip", "total"] as const,
+  required: ["items", "subtotal", "discount", "tax", "tip", "total"] as const,
   additionalProperties: false,
 };
 
@@ -48,6 +49,7 @@ interface RawReceiptItem {
 interface RawReceipt {
   items: RawReceiptItem[];
   subtotal: number;
+  discount: number;
   tax: number;
   tip: number | null;
   total: number;
@@ -82,7 +84,7 @@ export async function parseReceiptImage(
 
 Output one JSON object per receipt line — do not expand or split quantities, that will be handled separately.
 
-Also extract subtotal, tax, tip (null if not on receipt), and total.
+Also extract subtotal, discount (0 if none), tax, tip (null if not on receipt), and total. Discount is any coupon, promo, or discount line that reduces the subtotal.
 
 Return ONLY valid JSON matching this schema, no commentary:
 ${JSON.stringify(RECEIPT_SCHEMA)}`,
@@ -105,15 +107,25 @@ ${JSON.stringify(RECEIPT_SCHEMA)}`,
 
   const raw = JSON.parse(jsonStr) as RawReceipt;
 
-  // Convert: unit_price = line_total / quantity
+  const discount = raw.discount ?? 0;
+  // Discount factor scales each item price proportionally so they sum to (subtotal - discount)
+  const discountFactor = raw.subtotal > 0 && discount > 0
+    ? (raw.subtotal - discount) / raw.subtotal
+    : 1;
+
   const parsed: ParsedReceipt = {
-    items: raw.items.map((item) => ({
-      name: item.name,
-      quantity: item.quantity,
-      unit_price: Math.round((item.line_total / item.quantity) * 100) / 100,
-      total_price: item.line_total,
-    })),
+    items: raw.items.map((item) => {
+      const rawUnitPrice = item.line_total / item.quantity;
+      const discountedUnitPrice = Math.round(rawUnitPrice * discountFactor * 100) / 100;
+      return {
+        name: item.name,
+        quantity: item.quantity,
+        unit_price: discountedUnitPrice,
+        total_price: Math.round(item.line_total * discountFactor * 100) / 100,
+      };
+    }),
     subtotal: raw.subtotal,
+    discount,
     tax: raw.tax,
     tip: raw.tip,
     total: raw.total,
@@ -165,9 +177,10 @@ export function validateReceipt(
   items: LineItem[]
 ): string | null {
   const itemsSum = items.reduce((sum, item) => sum + item.unitPrice, 0);
-  const diff = Math.abs(itemsSum - parsed.subtotal);
+  const effectiveSubtotal = parsed.subtotal - (parsed.discount ?? 0);
+  const diff = Math.abs(itemsSum - effectiveSubtotal);
   if (diff > 0.5) {
-    return `Warning: Item prices sum to $${itemsSum.toFixed(2)} but receipt subtotal is $${parsed.subtotal.toFixed(2)} (difference: $${diff.toFixed(2)}).`;
+    return `Warning: Item prices sum to $${itemsSum.toFixed(2)} but receipt subtotal is $${effectiveSubtotal.toFixed(2)} (difference: $${diff.toFixed(2)}).`;
   }
   return null;
 }
