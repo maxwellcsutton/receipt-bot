@@ -70,3 +70,21 @@ export function getImageMediaType(
   if (type.includes("webp")) return "image/webp";
   return null;
 }
+
+import { ThreadChannel } from 'discord.js';
+
+/**
+ * Removes a user from a thread.
+ * @param thread - The thread channel to remove the user from.
+ * @param userId - The ID of the user to remove.
+ * @returns A promise that resolves when the user is removed.
+ */
+export async function removeUserFromThread(thread: ThreadChannel, userId: string): Promise<void> {
+  try {
+    await thread.members.remove(userId);
+    console.log(`User ${userId} removed from thread ${thread.name}`);
+  } catch (error) {
+    console.error(`Failed to remove user ${userId} from thread ${thread.name}:`, error);
+    throw error;
+  }
+}

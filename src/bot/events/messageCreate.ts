@@ -274,9 +274,14 @@ async function handleSum(
           await thread.send(
             `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`,
           );
+          try {
+            await thread.edit({ archived: true, locked: true });
+          } catch {
+            // ignore — bot may lack Manage Threads permission
+          }
         }
 
-        // Remove user from thread (self-initiated payment, not primary user of this session)
+        // Remove user from thread (self-initiated via sum paid, not primary user of this session)
         if (message.author.id !== session.primaryUserId) {
           try {
             await thread.members.remove(message.author.id);
@@ -780,7 +785,7 @@ async function handlePaid(
   await updateSummaryMessage(message, refreshedSession);
   await checkAndNotify(message, refreshedSession);
 
-  // Only remove user if they marked themselves paid (not via proxy) and aren't the primary user
+  // Remove user from thread if they marked themselves paid (not proxy) and aren't the primary user
   if (
     targetUserId === message.author.id &&
     targetUserId !== session.primaryUserId
@@ -845,6 +850,12 @@ async function checkAndNotify(
     await thread.send(
       `🎉 **${primaryName}** — All payments for **${session.restaurantName}** have been received!`,
     );
+
+    try {
+      await thread.edit({ archived: true, locked: true });
+    } catch {
+      // ignore — bot may lack Manage Threads permission
+    }
   } else if (!allClaimed) {
     const items = manager.getItems(session.id);
     const unclaimed = items.filter((i) => !i.claimedByUserId);
