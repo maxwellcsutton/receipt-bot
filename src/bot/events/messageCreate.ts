@@ -15,8 +15,8 @@ import {
 } from "../../receipt/parser.js";
 import {
   buildSummaryEmbeds,
+  buildUserEmbed,
   formatItemList,
-  formatUserTotal,
 } from "../../receipt/formatter.js";
 import * as manager from "../../session/manager.js";
 import {
@@ -520,8 +520,12 @@ async function handleClaim(
   const ut = userTotals.find((u) => u.userId === targetUserId);
 
   if (ut) {
-    const tipSet = refreshedSession.tipAmount !== null;
-    await message.reply(formatUserTotal(ut, tipSet, displayName(targetUserId)));
+    const payments = manager.getPaymentStatuses(refreshedSession.id);
+    const splits = manager.getSplits(refreshedSession.id);
+    const paid = payments.find((p) => p.userId === targetUserId)?.paid ?? false;
+    const embed = buildUserEmbed(ut, paid, splits, refreshedSession, displayName);
+    embed.setDescription("Reply `paid` / `p` when you've paid.");
+    await message.reply({ embeds: [embed] });
   }
 
   await updateSummaryMessage(message, refreshedSession);
