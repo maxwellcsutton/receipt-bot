@@ -53,6 +53,12 @@ export function registerMessageCreateEvent(client: Client): void {
         return;
       }
 
+      // Add total command (manual leaderboard entry)
+      if (content.includes("addtotal")) {
+        await handleAddTotal(message);
+        return;
+      }
+
       // Sum command (check "sum paid" before "sum")
       if (content.includes("sum paid")) {
         await handleSum(message, client, true);
@@ -179,6 +185,78 @@ async function handleLeaderboard(message: Message): Promise<void> {
   }
 
   await message.reply({ embeds: [embed] });
+}
+
+async function handleAddTotal(message: Message): Promise<void> {
+  if (!message.guildId || !message.guild) {
+    await message.reply("This command is only available in servers.");
+    return;
+  }
+
+  // Strip all mentions to isolate the restaurant name and amounts
+  // Original: "@bot addtotal TK @user1 45.00 @user2 75.50"
+  const afterKeyword = message.content
+    .replace(/addtotal\s*/i, "")
+    .trim();
+
+  // Extract restaurant name: text before the first user mention
+  const firstMentionPos = afterKeyword.search(/<@!?\d+>/);
+  if (firstMentionPos === -1) {
+    await message.reply(
+      "Usage: `@bot addtotal [restaurant] @user1 amount1 @user2 amount2`",
+    );
+    return;
+  }
+
+  const restaurantRaw = afterKeyword.slice(0, firstMentionPos).trim();
+  if (!restaurantRaw) {
+    await message.reply("Please specify a restaurant name before the mentions.");
+    return;
+  }
+  const restaurantName = extractRestaurantName(restaurantRaw, "");
+
+  // Parse mention+amount pairs from the remainder
+  const remainder = afterKeyword.slice(firstMentionPos);
+  const tokens = remainder.trim().split(/\s+/);
+  const userAmounts: { userId: string; grandTotal: number }[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const mentionMatch = tokens[i].match(/^<@!?(\d+)>$/);
+    if (!mentionMatch) continue;
+    const userId = mentionMatch[1];
+    const next = tokens[i + 1];
+    if (!next) {
+      await message.reply(`Missing amount after <@${userId}>.`);
+      return;
+    }
+    const amount = parseFloat(next.replace("$", ""));
+    if (isNaN(amount) || amount < 0) {
+      await message.reply(`Invalid amount "${next}" after <@${userId}>.`);
+      return;
+    }
+    userAmounts.push({ userId, grandTotal: amount });
+    i++; // skip the amount token
+  }
+
+  if (userAmounts.length === 0) {
+    await message.reply("Please mention at least one user with an amount.");
+    return;
+  }
+
+  manager.recordSettlement(message.guildId, restaurantName, userAmounts);
+
+  const displayName = await buildDisplayNameResolver(
+    message.guild,
+    userAmounts.map((u) => u.userId),
+  );
+  const total = userAmounts.reduce((sum, u) => sum + u.grandTotal, 0);
+  const lines = userAmounts.map(
+    (u) => `  ${displayName(u.userId)}: $${u.grandTotal.toFixed(2)}`,
+  );
+
+  await message.reply(
+    `Added to leaderboard:\n**${restaurantName}** — $${total.toFixed(2)}\n${lines.join("\n")}`,
+  );
 }
 
 async function handleSum(
