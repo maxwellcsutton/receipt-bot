@@ -193,20 +193,15 @@ async function handleAddTotal(message: Message): Promise<void> {
     return;
   }
 
-  // Strip bot mentions, then the "addtotal" keyword
-  // Original content: "<@botid> addtotal Ozen <@user1> 55 ..."
-  const nonBotUserIds = new Set(
-    message.mentions.users.filter((u) => !u.bot).map((u) => u.id),
-  );
-
-  const afterKeyword = message.content
-    .replace(/<@!?\d+>/g, (match) => {
-      // Remove bot mentions; preserve user mentions
-      const id = match.replace(/[<@!>]/g, "");
-      return nonBotUserIds.has(id) ? match : "";
-    })
-    .replace(/addtotal\s*/i, "")
-    .trim();
+  // Take everything after the "addtotal" keyword — the bot mention always precedes it
+  const addtotalMatch = message.content.match(/addtotal\s*(.*)/is);
+  if (!addtotalMatch) {
+    await message.reply(
+      "Usage: `@bot addtotal [restaurant] @user1 amount1 @user2 amount2`",
+    );
+    return;
+  }
+  const afterKeyword = addtotalMatch[1].trim();
 
   // Extract restaurant name: text before the first user mention
   const firstMentionPos = afterKeyword.search(/<@!?\d+>/);
