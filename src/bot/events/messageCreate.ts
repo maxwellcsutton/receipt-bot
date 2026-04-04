@@ -193,9 +193,18 @@ async function handleAddTotal(message: Message): Promise<void> {
     return;
   }
 
-  // Strip all mentions to isolate the restaurant name and amounts
-  // Original: "@bot addtotal TK @user1 45.00 @user2 75.50"
+  // Strip bot mentions, then the "addtotal" keyword
+  // Original content: "<@botid> addtotal Ozen <@user1> 55 ..."
+  const nonBotUserIds = new Set(
+    message.mentions.users.filter((u) => !u.bot).map((u) => u.id),
+  );
+
   const afterKeyword = message.content
+    .replace(/<@!?\d+>/g, (match) => {
+      // Remove bot mentions; preserve user mentions
+      const id = match.replace(/[<@!>]/g, "");
+      return nonBotUserIds.has(id) ? match : "";
+    })
     .replace(/addtotal\s*/i, "")
     .trim();
 
