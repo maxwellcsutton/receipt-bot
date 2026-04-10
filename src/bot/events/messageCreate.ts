@@ -444,8 +444,9 @@ async function handleNewReceipt(
 
   manager.logApiCost(estimatedCostUsd);
 
-  const lineItems = expandLineItems(parsed);
-  const warning = validateReceipt(parsed, lineItems);
+  const allItems = expandLineItems(parsed);
+  const lineItems = allItems.filter((item) => item.unitPrice > 0);
+  const warning = validateReceipt(parsed, allItems);
 
   const thread = await (message.channel as TextChannel).threads.create({
     name: restaurantName,
@@ -572,6 +573,21 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
     return;
   }
 
+  if (contentClean.startsWith("edit ") || contentClean.startsWith("e ")) {
+    await handleEditPrice(message, session, contentClean);
+    return;
+  }
+
+  if (contentClean.startsWith("add ") || contentClean.startsWith("a ")) {
+    await handleAddItem(message, session, contentClean);
+    return;
+  }
+
+  if (contentClean.startsWith("remove ") || contentClean.startsWith("rm ")) {
+    await handleRemoveItem(message, session, contentClean);
+    return;
+  }
+
   if (contentClean.startsWith("claim ") || contentClean === "claim" || contentClean.startsWith("c ") || contentClean === "c") {
     const prefix = contentClean.startsWith("claim") ? "claim" : "c";
     const numbers = parseItemNumbers(contentClean.slice(prefix.length));
@@ -644,6 +660,147 @@ async function handleUnclaim(
   }
 
   await message.reply(`Unclaimed items: ${numbers.join(", ")}`);
+
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleEditPrice(
+  message: Message,
+  session: ReceiptSession,
+  contentClean: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can edit item prices.");
+    return;
+  }
+
+  const prefix = contentClean.startsWith("edit ") ? "edit " : "e ";
+  const parts = contentClean.slice(prefix.length).trim().split(/\s+/);
+  const itemIndex = parseInt(parts[0], 10);
+  const newPrice = parseFloat(parts[1]?.replace("$", "") ?? "");
+
+  if (isNaN(itemIndex) || isNaN(newPrice) || newPrice < 0) {
+    await message.reply("Usage: `edit <item#> <price>` (e.g. `edit 5 12.50`)");
+    return;
+  }
+
+  try {
+    manager.editItemPrice(session.id, itemIndex, newPrice);
+  } catch (err) {
+    await message.reply(
+      err instanceof Error ? err.message : "Failed to edit item.",
+    );
+    return;
+  }
+
+  await message.reply(`Item ${itemIndex} price updated to $${newPrice.toFixed(2)}.`);
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleAddItem(
+  message: Message,
+  session: ReceiptSession,
+  contentClean: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can add items.");
+    return;
+  }
+
+  // Format: add <name> <price> [qty]
+  // Parse from the end: last token is qty (if numeric), second-to-last is price, rest is name
+  const prefix = contentClean.startsWith("add ") ? "add " : "a ";
+  const tokens = contentClean.slice(prefix.length).trim().split(/\s+/);
+
+  if (tokens.length < 2) {
+    await message.reply(
+      "Usage: `add <name> <price> [qty]` (e.g. `add Diet Coke 1.75 2`)",
+    );
+    return;
+  }
+
+  let quantity = 1;
+  let priceIndex = tokens.length - 1;
+
+  // Check if last token is a quantity (integer) and second-to-last is a price
+  if (tokens.length >= 3) {
+    const maybeQty = parseInt(tokens[tokens.length - 1], 10);
+    const maybePrice = parseFloat(tokens[tokens.length - 2]?.replace("$", "") ?? "");
+    if (!isNaN(maybeQty) && maybeQty > 0 && !isNaN(maybePrice) && maybePrice >= 0) {
+      quantity = maybeQty;
+      priceIndex = tokens.length - 2;
+    }
+  }
+
+  const price = parseFloat(tokens[priceIndex]?.replace("$", "") ?? "");
+  if (isNaN(price) || price < 0) {
+    await message.reply(
+      "Usage: `add <name> <price> [qty]` (e.g. `add Diet Coke 1.75 2`)",
+    );
+    return;
+  }
+
+  const name = tokens.slice(0, priceIndex).join(" ");
+  if (!name) {
+    await message.reply("Please provide an item name.");
+    return;
+  }
+
+  const indices = manager.addItem(session.id, name, price, quantity);
+  const label = quantity > 1 ? `${quantity}x ${name}` : name;
+  await message.reply(
+    `Added **${label}** at $${price.toFixed(2)} each (item${indices.length > 1 ? "s" : ""} ${indices.join(", ")}).`,
+  );
+
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleRemoveItem(
+  message: Message,
+  session: ReceiptSession,
+  contentClean: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can remove items.");
+    return;
+  }
+
+  const prefix = contentClean.startsWith("remove ") ? "remove " : "rm ";
+  const numbers = parseItemNumbers(contentClean.slice(prefix.length));
+  if (numbers.length === 0) {
+    await message.reply("Usage: `remove <item#>` (e.g. `remove 5` or `rm 3 5 7`)");
+    return;
+  }
+
+  const errors: string[] = [];
+  for (const idx of numbers) {
+    try {
+      manager.removeItem(session.id, idx);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : `Failed to remove item ${idx}.`);
+    }
+  }
+
+  if (errors.length > 0) {
+    await message.reply(errors.join("\n"));
+    if (errors.length === numbers.length) return;
+  }
+
+  const removed = numbers.filter(
+    (n) => !errors.some((e) => e.includes(`${n}`)),
+  );
+  if (removed.length > 0) {
+    await message.reply(`Removed item${removed.length > 1 ? "s" : ""}: ${removed.join(", ")}`);
+  }
 
   const refreshedSession = manager.getSession(
     (message.channel as ThreadChannel).id,

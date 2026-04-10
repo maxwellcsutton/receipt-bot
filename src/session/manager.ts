@@ -37,6 +37,27 @@ export function unclaimItems(
   store.unclaimItems(sessionId, itemIndices, userId);
 }
 
+export function editItemPrice(
+  sessionId: string,
+  itemIndex: number,
+  newPrice: number,
+): void {
+  store.editItemPrice(sessionId, itemIndex, newPrice);
+}
+
+export function addItem(
+  sessionId: string,
+  name: string,
+  unitPrice: number,
+  quantity: number,
+): number[] {
+  return store.addItem(sessionId, name, unitPrice, quantity);
+}
+
+export function removeItem(sessionId: string, itemIndex: number): void {
+  store.removeItem(sessionId, itemIndex);
+}
+
 export function splitItem(
   sessionId: string,
   itemIndex: number,

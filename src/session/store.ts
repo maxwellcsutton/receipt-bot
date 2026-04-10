@@ -141,6 +141,71 @@ export function unclaimItems(
   transaction();
 }
 
+export function editItemPrice(
+  sessionId: string,
+  itemIndex: number,
+  newPrice: number,
+): void {
+  const db = getDb();
+  const result = db
+    .prepare(
+      "UPDATE line_items SET unit_price = ? WHERE session_id = ? AND item_index = ?",
+    )
+    .run(newPrice, sessionId, itemIndex);
+  if (result.changes === 0) {
+    throw new Error(`Item ${itemIndex} does not exist.`);
+  }
+}
+
+export function addItem(
+  sessionId: string,
+  name: string,
+  unitPrice: number,
+  quantity: number,
+): number[] {
+  const db = getDb();
+  const maxRow = db
+    .prepare(
+      "SELECT MAX(item_index) as max_idx FROM line_items WHERE session_id = ?",
+    )
+    .get(sessionId) as any;
+  let nextIndex = (maxRow?.max_idx ?? 0) + 1;
+
+  const stmt = db.prepare(
+    "INSERT INTO line_items (session_id, item_index, name, unit_price, original_quantity, claimed_by_user_id) VALUES (?, ?, ?, ?, ?, NULL)",
+  );
+
+  const indices: number[] = [];
+  const transaction = db.transaction(() => {
+    for (let i = 1; i <= quantity; i++) {
+      const itemName = quantity > 1 ? `${name} (${i} of ${quantity})` : name;
+      stmt.run(sessionId, nextIndex, itemName, unitPrice, quantity);
+      indices.push(nextIndex);
+      nextIndex++;
+    }
+  });
+  transaction();
+  return indices;
+}
+
+export function removeItem(sessionId: string, itemIndex: number): void {
+  const db = getDb();
+  const transaction = db.transaction(() => {
+    db.prepare(
+      "DELETE FROM split_items WHERE session_id = ? AND line_item_index = ?",
+    ).run(sessionId, itemIndex);
+    const result = db
+      .prepare(
+        "DELETE FROM line_items WHERE session_id = ? AND item_index = ?",
+      )
+      .run(sessionId, itemIndex);
+    if (result.changes === 0) {
+      throw new Error(`Item ${itemIndex} does not exist.`);
+    }
+  });
+  transaction();
+}
+
 // --- Splits ---
 
 export function splitItem(
