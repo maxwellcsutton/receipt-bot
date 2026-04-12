@@ -536,6 +536,11 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
     return;
   }
 
+  if (contentClean.startsWith("rename ") || contentClean.startsWith("rn ")) {
+    await handleRename(message, session, contentClean);
+    return;
+  }
+
   if (contentClean.startsWith("tip ") || contentClean.startsWith("t ")) {
     await handleTipCommand(message, session, contentClean);
     return;
@@ -664,6 +669,39 @@ async function handleUnclaim(
   const refreshedSession = manager.getSession(
     (message.channel as ThreadChannel).id,
   )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleRename(
+  message: Message,
+  session: ReceiptSession,
+  contentClean: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can rename the receipt.");
+    return;
+  }
+
+  const prefix = contentClean.startsWith("rename ") ? "rename " : "rn ";
+  const rawName = contentClean.slice(prefix.length).trim();
+  if (!rawName) {
+    await message.reply("Usage: `rename <restaurant name>` (e.g. `rename TK`)");
+    return;
+  }
+
+  const newName = extractRestaurantName(rawName, "");
+  manager.setRestaurantName(session.id, newName);
+
+  // Also rename the thread to match
+  const thread = message.channel as ThreadChannel;
+  try {
+    await thread.setName(newName);
+  } catch {
+    // ignore — bot may lack permission
+  }
+
+  await message.reply(`Restaurant renamed to **${newName}**.`);
+  const refreshedSession = manager.getSession(thread.id)!;
   await updateSummaryMessage(message, refreshedSession);
 }
 

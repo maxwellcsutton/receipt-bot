@@ -66,6 +66,10 @@ export function splitItem(
   store.splitItem(sessionId, itemIndex, userIds);
 }
 
+export function setRestaurantName(sessionId: string, name: string): void {
+  store.updateRestaurantName(sessionId, name);
+}
+
 export function setTip(sessionId: string, tipAmount: number): void {
   store.updateTip(sessionId, tipAmount);
 }

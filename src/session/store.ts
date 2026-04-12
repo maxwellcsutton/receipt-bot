@@ -331,6 +331,14 @@ export function addTaggedUser(sessionId: string, userId: string): void {
   }
 }
 
+export function updateRestaurantName(sessionId: string, name: string): void {
+  const db = getDb();
+  db.prepare("UPDATE receipt_sessions SET restaurant_name = ? WHERE id = ?").run(
+    name,
+    sessionId,
+  );
+}
+
 export function updateTip(sessionId: string, tipAmount: number): void {
   const db = getDb();
   db.prepare("UPDATE receipt_sessions SET tip_amount = ? WHERE id = ?").run(

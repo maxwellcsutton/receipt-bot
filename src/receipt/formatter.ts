@@ -143,6 +143,7 @@ export function formatItemList(taggedUserIds: string[]): string {
     "`status` / `st` — show current claim status",
     "`sum` / `sm` — show your unpaid totals across all receipts",
     "`sum paid` / `sp` — mark all your unpaid items as paid",
+    "`rename TK` / `rn TK` — rename the restaurant (primary user only)",
     "`edit 5 12.50` / `e 5 12.50` — fix an item's price (primary user only)",
     "`add Diet Coke 1.75 2` / `a Diet Coke 1.75` — add item with optional qty (primary user only)",
     "`remove 5` / `rm 3 5 7` — remove items (primary user only)",
