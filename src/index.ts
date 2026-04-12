@@ -22,7 +22,19 @@ initDatabase();
 registerReadyEvent(client);
 registerMessageCreateEvent(client);
 
-client.login(config.discordToken).catch((err) => {
-  console.error("Failed to login:", err);
-  process.exit(1);
+client.on("error", (err) => console.error("Client error:", err));
+client.on("warn", (msg) => console.warn("Client warn:", msg));
+client.on("debug", (msg) => {
+  if (msg.includes("Heartbeat") || msg.includes("Session")) return;
+  console.log("Client debug:", msg);
 });
+client.on("invalidated", () => console.error("Session invalidated"));
+
+console.log("Calling client.login()...");
+client
+  .login(config.discordToken)
+  .then(() => console.log("login() resolved"))
+  .catch((err) => {
+    console.error("Failed to login:", err);
+    process.exit(1);
+  });
