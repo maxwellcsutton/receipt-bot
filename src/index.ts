@@ -16,6 +16,15 @@ http
     console.log(`Health check listening on port ${port}`);
   });
 
+// Test Discord API connectivity before attempting login
+console.log("Testing Discord API connectivity...");
+fetch("https://discord.com/api/v10/gateway/bot", {
+  headers: { Authorization: `Bot ${config.discordToken}` },
+})
+  .then((res) => res.json())
+  .then((data) => console.log("Gateway API response:", JSON.stringify(data)))
+  .catch((err) => console.error("Gateway API fetch failed:", err));
+
 const client = createClient();
 
 initDatabase();
@@ -24,11 +33,14 @@ registerMessageCreateEvent(client);
 
 client.on("error", (err) => console.error("Client error:", err));
 client.on("warn", (msg) => console.warn("Client warn:", msg));
-client.on("debug", (msg) => {
-  if (msg.includes("Heartbeat") || msg.includes("Session")) return;
-  console.log("Client debug:", msg);
-});
+client.on("debug", (msg) => console.log("Client debug:", msg));
 client.on("invalidated", () => console.error("Session invalidated"));
+client.rest.on("rateLimited", (info) =>
+  console.warn("Rate limited:", JSON.stringify(info)),
+);
+client.rest.on("response", (req, res) =>
+  console.log(`REST response: ${req.method} ${req.path} -> ${res.status}`),
+);
 
 console.log("Calling client.login()...");
 client
