@@ -10,4 +10,7 @@ initDatabase();
 registerReadyEvent(client);
 registerMessageCreateEvent(client);
 
-client.login(config.discordToken);
+client.login(config.discordToken).catch((err) => {
+  console.error("Failed to start bot:", err);
+  process.exit(1);
+});
