@@ -74,6 +74,10 @@ export function setTip(sessionId: string, tipAmount: number): void {
   store.updateTip(sessionId, tipAmount);
 }
 
+export function voidSession(sessionId: string): void {
+  store.updateSessionStatus(sessionId, "voided");
+}
+
 export function markUserPaid(sessionId: string, userId: string): void {
   store.markPaid(sessionId, userId);
 }

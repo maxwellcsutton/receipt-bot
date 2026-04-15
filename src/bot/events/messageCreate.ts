@@ -12,6 +12,7 @@ import {
   parseReceiptImage,
   expandLineItems,
   validateReceipt,
+  subtotalItemsDiff,
 } from "../../receipt/parser.js";
 import {
   buildSummaryEmbeds,
@@ -437,21 +438,42 @@ async function handleNewReceipt(
   const buffer = Buffer.from(await response.arrayBuffer());
   const imageBase64 = buffer.toString("base64");
 
-  const { parsed, estimatedCostUsd } = await parseReceiptImage(
-    imageBase64,
-    mediaType,
-  );
+  const first = await parseReceiptImage(imageBase64, mediaType);
+  manager.logApiCost(first.estimatedCostUsd);
 
-  manager.logApiCost(estimatedCostUsd);
+  let parsed = first.parsed;
+  let allItems = expandLineItems(parsed);
+  let warning = validateReceipt(parsed, allItems);
+  let wasRescanned = false;
 
-  const allItems = expandLineItems(parsed);
+  if (warning) {
+    const retry = await parseReceiptImage(imageBase64, mediaType);
+    manager.logApiCost(retry.estimatedCostUsd);
+    const retryItems = expandLineItems(retry.parsed);
+    const retryWarning = validateReceipt(retry.parsed, retryItems);
+
+    const firstDiff = subtotalItemsDiff(parsed, allItems);
+    const retryDiff = subtotalItemsDiff(retry.parsed, retryItems);
+    if (retryDiff < firstDiff) {
+      parsed = retry.parsed;
+      allItems = retryItems;
+      warning = retryWarning;
+    }
+    wasRescanned = true;
+  }
+
   const lineItems = allItems.filter((item) => item.unitPrice > 0);
-  const warning = validateReceipt(parsed, allItems);
 
   const thread = await (message.channel as TextChannel).threads.create({
     name: restaurantName,
     startMessage: message,
   });
+
+  const tipFromReceipt = parsed.tip;
+  const defaultTipApplied = tipFromReceipt === null || tipFromReceipt === 0;
+  const effectiveTip = defaultTipApplied
+    ? Math.round(parsed.subtotal * 0.20 * 100) / 100
+    : tipFromReceipt;
 
   const session: ReceiptSession = {
     id: randomUUID(),
@@ -464,7 +486,7 @@ async function handleNewReceipt(
     subtotal: parsed.subtotal,
     discountAmount: parsed.discount,
     taxAmount: parsed.tax,
-    tipAmount: parsed.tip,
+    tipAmount: effectiveTip,
     total: parsed.total,
     status: "active",
     summaryMessageId: null,
@@ -492,13 +514,19 @@ async function handleNewReceipt(
   const summaryMsg = await thread.send({ embeds });
   manager.setSummaryMessageId(session.id, summaryMsg.id);
 
+  if (wasRescanned) {
+    await thread.send(
+      "🔄 The receipt was re-scanned because the first scan's item prices didn't match the subtotal. Please double-check the values below.",
+    );
+  }
+
   if (warning) {
     await thread.send(`⚠️ ${warning}`);
   }
 
-  if (parsed.tip === null || parsed.tip === 0) {
+  if (defaultTipApplied) {
     await thread.send(
-      "No tip detected on the receipt. The primary user can reply `tip 20%` or `tip 15.00` to add a tip, or `tip 0` to skip.",
+      `No tip detected on the receipt — a default 20% tip ($${effectiveTip.toFixed(2)}) was applied. The primary user can reply \`tip 15%\`, \`tip 15.00\`, or \`tip 0\` to change it.`,
     );
   }
 
@@ -513,6 +541,11 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
 
   if (session.status === "settled") {
     await message.reply("This receipt has already been settled.");
+    return;
+  }
+
+  if (session.status === "voided") {
+    await message.reply("This receipt has been voided — no further commands are accepted.");
     return;
   }
 
@@ -553,6 +586,11 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
 
   if (contentClean.startsWith("split ") || contentClean.startsWith("s ")) {
     await handleSplit(message, session, effectiveUserId);
+    return;
+  }
+
+  if (contentClean === "void") {
+    await handleVoid(message, session);
     return;
   }
 
@@ -851,21 +889,19 @@ async function handleSplit(
   session: ReceiptSession,
   effectiveUserId: string,
 ): Promise<void> {
-  // Parse item index — strip mentions first since they may contain numbers
-  const parts = message.content
-    .replace(/<@!?\d+>/g, "")
-    .trim()
-    .split(/\s+/);
-  const itemIndex = parseInt(parts[1], 10);
-  if (isNaN(itemIndex)) {
-    await message.reply("Usage: `split <item number> @user1 @user2`");
+  // Strip mentions so numbers in mention IDs don't confuse parsing
+  const stripped = message.content.replace(/<@!?\d+>/g, "").trim();
+  // Drop the command prefix (split / s) then parse remaining tokens as item numbers
+  const afterPrefix = stripped.replace(/^(split|s)\s+/i, "");
+  const itemIndices = parseItemNumbers(afterPrefix);
+  if (itemIndices.length === 0) {
+    await message.reply("Usage: `split <item number(s)> @user1 @user2`");
     return;
   }
 
   const mentionedIds = message.mentions.users
     .filter((u) => !u.bot)
     .map((u) => u.id);
-  // effectiveUserId is the acting participant; add all other mentions, deduped
   const allUserIds = [
     effectiveUserId,
     ...mentionedIds.filter((id) => id !== effectiveUserId),
@@ -873,35 +909,75 @@ async function handleSplit(
 
   if (allUserIds.length < 2) {
     await message.reply(
-      "Please mention at least one other user to split the item with.",
+      "Please mention at least one other user to split the item(s) with.",
     );
     return;
   }
 
-  try {
-    manager.splitItem(session.id, itemIndex, allUserIds);
-  } catch (err) {
-    await message.reply(
-      err instanceof Error ? err.message : "Failed to split item.",
-    );
-    return;
+  const succeeded: number[] = [];
+  const failures: string[] = [];
+  for (const itemIndex of itemIndices) {
+    try {
+      manager.splitItem(session.id, itemIndex, allUserIds);
+      succeeded.push(itemIndex);
+    } catch (err) {
+      failures.push(
+        `Item ${itemIndex}: ${err instanceof Error ? err.message : "failed"}`,
+      );
+    }
   }
 
   const displayName = await getDisplayNameResolver(message, session);
-  const items = manager.getItems(session.id);
-  const item = items.find((i) => i.index === itemIndex);
-  const perPerson = item
-    ? (item.unitPrice / allUserIds.length).toFixed(2)
-    : "?";
   const names = allUserIds.map((id) => displayName(id)).join(", ");
-  await message.reply(
-    `Item ${itemIndex} split between ${names} — $${perPerson} each.`,
-  );
+
+  if (succeeded.length > 0) {
+    const items = manager.getItems(session.id);
+    const lines = succeeded.map((idx) => {
+      const item = items.find((i) => i.index === idx);
+      const perPerson = item
+        ? (item.unitPrice / allUserIds.length).toFixed(2)
+        : "?";
+      return `Item ${idx}: $${perPerson} each`;
+    });
+    const header =
+      succeeded.length === 1
+        ? `Item ${succeeded[0]} split between ${names}:`
+        : `Items ${succeeded.join(", ")} split between ${names}:`;
+    await message.reply(`${header}\n${lines.join("\n")}`);
+  }
+
+  if (failures.length > 0) {
+    await message.reply(failures.join("\n"));
+  }
 
   const refreshedSession = manager.getSession(
     (message.channel as ThreadChannel).id,
   )!;
   await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleVoid(
+  message: Message,
+  session: ReceiptSession,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can void this receipt.");
+    return;
+  }
+
+  manager.voidSession(session.id);
+
+  await message.reply(
+    "🚫 Receipt voided. No further commands will be accepted on this thread.",
+  );
+
+  const thread = message.channel as ThreadChannel;
+  try {
+    await thread.setLocked(true);
+    await thread.setArchived(true);
+  } catch {
+    // ignore — bot may lack manage-threads permission
+  }
 }
 
 async function handleUnpaid(

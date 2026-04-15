@@ -172,6 +172,15 @@ export function expandLineItems(parsed: ParsedReceipt): LineItem[] {
   return items;
 }
 
+export function subtotalItemsDiff(
+  parsed: ParsedReceipt,
+  items: LineItem[],
+): number {
+  const itemsSum = items.reduce((sum, item) => sum + item.unitPrice, 0);
+  const effectiveSubtotal = parsed.subtotal - (parsed.discount ?? 0);
+  return Math.abs(itemsSum - effectiveSubtotal);
+}
+
 export function validateReceipt(
   parsed: ParsedReceipt,
   items: LineItem[]

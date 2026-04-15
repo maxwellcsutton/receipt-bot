@@ -29,7 +29,7 @@ export interface SplitEntry {
   shareCount: number;
 }
 
-export type SessionStatus = "active" | "all_claimed" | "settled";
+export type SessionStatus = "active" | "all_claimed" | "settled" | "voided";
 
 export interface ReceiptSession {
   id: string;
