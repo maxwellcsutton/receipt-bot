@@ -347,6 +347,50 @@ export function updateTip(sessionId: string, tipAmount: number): void {
   );
 }
 
+export function replaceSessionItems(
+  sessionId: string,
+  items: LineItem[],
+  totals: {
+    subtotal: number;
+    discountAmount: number;
+    taxAmount: number;
+    tipAmount: number | null;
+    total: number;
+  },
+): void {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM split_items WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM user_payments WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM line_items WHERE session_id = ?").run(sessionId);
+
+    const insert = db.prepare(
+      "INSERT INTO line_items (session_id, item_index, name, unit_price, original_quantity, claimed_by_user_id) VALUES (?, ?, ?, ?, ?, NULL)",
+    );
+    for (const item of items) {
+      insert.run(
+        sessionId,
+        item.index,
+        item.name,
+        item.unitPrice,
+        item.originalQuantity,
+      );
+    }
+
+    db.prepare(
+      "UPDATE receipt_sessions SET subtotal = ?, discount_amount = ?, tax_amount = ?, tip_amount = ?, total = ?, status = 'active' WHERE id = ?",
+    ).run(
+      totals.subtotal,
+      totals.discountAmount,
+      totals.taxAmount,
+      totals.tipAmount,
+      totals.total,
+      sessionId,
+    );
+  });
+  tx();
+}
+
 // --- Leaderboard / Stats ---
 
 export function recordSettlement(

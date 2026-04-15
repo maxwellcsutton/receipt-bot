@@ -78,6 +78,20 @@ export function voidSession(sessionId: string): void {
   store.updateSessionStatus(sessionId, "voided");
 }
 
+export function replaceSessionItems(
+  sessionId: string,
+  items: LineItem[],
+  totals: {
+    subtotal: number;
+    discountAmount: number;
+    taxAmount: number;
+    tipAmount: number | null;
+    total: number;
+  },
+): void {
+  store.replaceSessionItems(sessionId, items, totals);
+}
+
 export function markUserPaid(sessionId: string, userId: string): void {
   store.markPaid(sessionId, userId);
 }

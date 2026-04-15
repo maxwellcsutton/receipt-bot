@@ -633,6 +633,12 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
     return;
   }
 
+  if (contentClean === "rescan" || contentClean.startsWith("rescan ")) {
+    const hint = contentClean === "rescan" ? "" : contentClean.slice("rescan ".length).trim();
+    await handleRescan(message, session, client, hint);
+    return;
+  }
+
   if (contentClean.startsWith("addproxy ") || contentClean.startsWith("ap ")) {
     await handleAddProxy(message, session);
     return;
@@ -1044,6 +1050,85 @@ async function handleAddProxy(
   await message.reply(
     `Added proxy **${name}**. Use \`claim 1 3 as ${name}\`, \`paid as ${name}\`, etc. to act on their behalf.`,
   );
+
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleRescan(
+  message: Message,
+  session: ReceiptSession,
+  client: Client,
+  hint: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can re-scan the receipt.");
+    return;
+  }
+
+  // Fetch the original channel + message to retrieve the receipt image
+  const origChannel = await client.channels.fetch(session.channelId);
+  if (!origChannel || !origChannel.isTextBased() || origChannel.isDMBased()) {
+    await message.reply("Couldn't access the original channel to re-fetch the image.");
+    return;
+  }
+  const origMessage = await (origChannel as TextChannel).messages
+    .fetch(session.originalMessageId)
+    .catch(() => null);
+  if (!origMessage) {
+    await message.reply("Couldn't find the original receipt message (it may have been deleted).");
+    return;
+  }
+  const attachment = origMessage.attachments.find((a) =>
+    a.contentType?.startsWith("image/"),
+  );
+  if (!attachment) {
+    await message.reply("The original message no longer has a receipt image.");
+    return;
+  }
+  const mediaType = getImageMediaType(attachment.contentType);
+  if (!mediaType) {
+    await message.reply("Unsupported image format on the original message.");
+    return;
+  }
+
+  manager.checkDailyLimit();
+  await message.react("⏳");
+
+  const response = await fetch(attachment.url);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const imageBase64 = buffer.toString("base64");
+
+  const { parsed, estimatedCostUsd } = await parseReceiptImage(
+    imageBase64,
+    mediaType,
+    hint || undefined,
+  );
+  manager.logApiCost(estimatedCostUsd);
+
+  const allItems = expandLineItems(parsed);
+  const lineItems = allItems.filter((item) => item.unitPrice > 0);
+  const warning = validateReceipt(parsed, allItems);
+
+  // Preserve existing tip behavior: keep current tipAmount, don't default-apply again
+  manager.replaceSessionItems(session.id, lineItems, {
+    subtotal: parsed.subtotal,
+    discountAmount: parsed.discount,
+    taxAmount: parsed.tax,
+    tipAmount: session.tipAmount,
+    total: parsed.total,
+  });
+
+  await message.reactions.removeAll().catch(() => {});
+  await message.reply(
+    `🔄 Receipt re-scanned${hint ? ` with hint: _${hint}_` : ""}. All previous claims, splits, and payment statuses were reset. Please double-check the values below.`,
+  );
+
+  if (warning) {
+    await (message.channel as ThreadChannel).send(`⚠️ ${warning}`);
+  }
 
   const refreshedSession = manager.getSession(
     (message.channel as ThreadChannel).id,

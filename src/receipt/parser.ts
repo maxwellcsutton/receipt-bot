@@ -60,9 +60,38 @@ export interface ParseResult {
   estimatedCostUsd: number;
 }
 
+// A line is treated as a modifier if its name starts with a configured modifier
+// prefix (e.g. "add ", "extra ", "sub ") or if its line_total is $0 (free option
+// lines are almost always modifiers). Indentation itself is handled by the Claude
+// prompt — this guardrail only catches leaked cases with clear naming signals.
+function looksLikeModifier(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return config.modifierPrefixes.some((p) => n.startsWith(p));
+}
+
+function rollUpModifiers(items: RawReceiptItem[]): RawReceiptItem[] {
+  const result: RawReceiptItem[] = [];
+  for (const item of items) {
+    const isZero = item.line_total === 0;
+    const isModifier = isZero || looksLikeModifier(item.name);
+    if (isModifier && result.length > 0) {
+      const parent = result[result.length - 1];
+      parent.line_total = Math.round((parent.line_total + item.line_total) * 100) / 100;
+      const suffix = item.name.trim();
+      if (suffix && !parent.name.toLowerCase().includes(suffix.toLowerCase())) {
+        parent.name = `${parent.name} + ${suffix}`;
+      }
+    } else {
+      result.push({ ...item });
+    }
+  }
+  return result;
+}
+
 export async function parseReceiptImage(
   imageBase64: string,
-  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+  userHint?: string,
 ): Promise<ParseResult> {
   const response = await anthropic.messages.create({
     model: MODEL,
@@ -77,12 +106,19 @@ export async function parseReceiptImage(
           },
           {
             type: "text",
-            text: `Extract all line items from this receipt. For each line item output one entry with:
+            text: `${userHint ? `USER HINT (pay close attention): ${userHint}\n\n` : ""}Extract all line items from this receipt. For each line item output one entry with:
 - name: the item name, stripped of any parenthetical numbers (e.g. "Mild Spicy Lamb Kebab(5)" → "Mild Spicy Lamb Kebab")
 - quantity: the number in the LEFTMOST column of that line. This is the only source of truth for quantity. Numbers inside the item name (like the "(5)" or "(1)") are NOT the quantity — ignore them.
-- line_total: the price shown on the right for that line (the full amount for all units combined)
+- line_total: the TOTAL price charged for this item (see MODIFIERS below)
 
-Output one JSON object per receipt line — do not expand or split quantities, that will be handled separately.
+MODIFIERS / ADD-ONS: Many receipts show modifiers, add-ons, options, or customizations INDENTED beneath a parent item (e.g. "Arrachera $2.16", "Add Guacamole $1.08", "Chile Guero $0.00" under a "Burrito" line). These are NOT separate items — they are upcharges or options that belong to the parent item. For each parent item:
+- Sum the parent's base price with the prices of all its indented modifier lines to produce line_total
+- Do NOT emit separate JSON entries for modifier/add-on lines
+- Modifiers with $0.00 are free options — include them in the name if useful (e.g. "Burrito (Arrachera, Add Guacamole)"), but do not create separate entries
+
+A line is a MODIFIER if it is visually indented under another item, starts with words like "Add", "Extra", "Side", or describes a sub-choice (meat type, temperature, side). A line is a PARENT item if it has its own quantity in the leftmost column.
+
+Output one JSON object per PARENT receipt line — do not expand or split quantities, that will be handled separately.
 
 Also extract subtotal, discount (0 if none), tax, tip (null if not on receipt), and total. Discount is any coupon, promo, or discount line that reduces the subtotal.
 
@@ -106,6 +142,10 @@ ${JSON.stringify(RECEIPT_SCHEMA)}`,
   }
 
   const raw = JSON.parse(jsonStr) as RawReceipt;
+
+  // Guardrail: detect modifier/add-on lines that Claude emitted as separate items
+  // and roll their line_total into the preceding parent item.
+  raw.items = rollUpModifiers(raw.items);
 
   const discount = raw.discount ?? 0;
   // Discount factor scales each item price proportionally so they sum to (subtotal - discount)

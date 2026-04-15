@@ -163,6 +163,7 @@ export function formatThreadHelp(): string {
     "`remove 5` / `rm 3 5 7` — remove items (primary user only)",
     "`adduser @user` / `au @user` — add a new user to the receipt (primary user only)",
     "`addproxy Alice` / `ap Alice` — add a placeholder for someone not in Discord (primary user only)",
+    "`rescan <optional hint>` — re-parse the receipt image; include a hint like `rescan item 3 was missed` (primary user only, resets all claims)",
     "`void` — void this receipt and lock the thread (primary user only)",
     "_(Primary user: add `@user` to any command to act on their behalf, or `as <proxyname>` for a proxy user)_",
   ].join("\n");
