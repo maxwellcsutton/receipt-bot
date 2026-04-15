@@ -42,21 +42,41 @@ import { Guild } from "discord.js";
 
 export type DisplayNameResolver = (userId: string) => string;
 
+export const PROXY_PREFIX = "proxy:";
+
+export function isProxyUserId(id: string): boolean {
+  return id.startsWith(PROXY_PREFIX);
+}
+
+export function proxyDisplayName(id: string): string {
+  return id.slice(PROXY_PREFIX.length);
+}
+
+export function makeProxyUserId(name: string): string {
+  return `${PROXY_PREFIX}${name}`;
+}
+
 export async function buildDisplayNameResolver(
   guild: Guild,
   userIds: string[],
 ): Promise<DisplayNameResolver> {
   const nameMap = new Map<string, string>();
   for (const id of userIds) {
+    if (isProxyUserId(id)) {
+      nameMap.set(id, proxyDisplayName(id));
+      continue;
+    }
     try {
       const member = await guild.members.fetch(id);
-      // displayName uses server nickname if set, otherwise global display name
       nameMap.set(id, member.displayName);
     } catch {
       nameMap.set(id, `<@${id}>`);
     }
   }
-  return (userId: string) => nameMap.get(userId) ?? `<@${userId}>`;
+  return (userId: string) => {
+    if (isProxyUserId(userId)) return proxyDisplayName(userId);
+    return nameMap.get(userId) ?? `<@${userId}>`;
+  };
 }
 
 export function getImageMediaType(

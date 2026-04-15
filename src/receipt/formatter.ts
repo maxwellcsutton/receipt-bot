@@ -136,7 +136,21 @@ export function formatItemList(taggedUserIds: string[]): string {
     "**Commands:**",
     "`claim 1 3 5` / `c 1 3 5` — claim items by number",
     "`unclaim 1 3` / `uc 1 3` — release claimed items",
-    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split an item between users",
+    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split item(s) between users",
+    "`tip 20%` / `t 20%` — set tip (primary user only)",
+    "`paid` / `p` — mark yourself as paid",
+    "_Reply `help` for more commands._",
+  ].join("\n");
+
+  return `${header}\n\nReply with the item numbers you want to claim.\n\n${commands}`;
+}
+
+export function formatThreadHelp(): string {
+  return [
+    "**Receipt thread commands:**",
+    "`claim 1 3 5` / `c 1 3 5` — claim items by number",
+    "`unclaim 1 3` / `uc 1 3` — release claimed items",
+    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split item(s) between users (accepts multiple item numbers)",
     "`tip 20%` / `t 20%` — set tip (primary user only)",
     "`paid` / `p` — mark yourself as paid",
     "`unpaid` / `up` — mark yourself as unpaid",
@@ -148,10 +162,23 @@ export function formatItemList(taggedUserIds: string[]): string {
     "`add Diet Coke 1.75 2` / `a Diet Coke 1.75` — add item with optional qty (primary user only)",
     "`remove 5` / `rm 3 5 7` — remove items (primary user only)",
     "`adduser @user` / `au @user` — add a new user to the receipt (primary user only)",
-    "_(Primary user: add @user to any command to act on their behalf)_",
+    "`addproxy Alice` / `ap Alice` — add a placeholder for someone not in Discord (primary user only)",
+    "`void` — void this receipt and lock the thread (primary user only)",
+    "_(Primary user: add `@user` to any command to act on their behalf, or `as <proxyname>` for a proxy user)_",
   ].join("\n");
+}
 
-  return `${header}\n\nReply with the item numbers you want to claim.\n\n${commands}`;
+export function formatChannelHelp(): string {
+  return [
+    "**Channel commands** (mention the bot):",
+    "`@bot <receipt image> @user1 @user2` — start a new receipt split and tag participants",
+    "`@bot <restaurant name> <image> @user1` — optionally include a restaurant name",
+    "`@bot sum` — show your unpaid totals across all receipts",
+    "`@bot sum paid` — mark all your unpaid items as paid",
+    "`@bot leaderboard` — show the top restaurants and spenders",
+    "`@bot addtotal <restaurant> <amount>` — manually log a receipt to the leaderboard",
+    "`@bot help` — show this message",
+  ].join("\n");
 }
 
 export function formatUserTotal(ut: UserTotal, tipSet: boolean, name: string): string {

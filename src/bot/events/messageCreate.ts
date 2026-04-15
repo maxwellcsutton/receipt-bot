@@ -18,6 +18,8 @@ import {
   buildSummaryEmbeds,
   buildUserEmbed,
   formatItemList,
+  formatThreadHelp,
+  formatChannelHelp,
 } from "../../receipt/formatter.js";
 import * as manager from "../../session/manager.js";
 import {
@@ -26,6 +28,8 @@ import {
   getImageMediaType,
   buildDisplayNameResolver,
   DisplayNameResolver,
+  isProxyUserId,
+  makeProxyUserId,
 } from "../../utils/discord.js";
 import { ReceiptSession, UserTotal } from "../../receipt/types.js";
 
@@ -47,6 +51,12 @@ export function registerMessageCreateEvent(client: Client): void {
       if (!message.mentions.has(client.user!)) return;
 
       const content = message.content.toLowerCase();
+
+      // Help command
+      if (content.includes("help")) {
+        await message.reply(formatChannelHelp());
+        return;
+      }
 
       // Leaderboard command
       if (content.includes("leaderboard")) {
@@ -103,6 +113,26 @@ function getProxyTarget(
   const targetId = mentioned[0];
   if (!session.taggedUserIds.includes(targetId)) return null;
   return targetId;
+}
+
+// Resolves a trailing `as <name>` proxy suffix. Only the primary user may use it.
+// Returns the matched proxy user ID and the command text with the suffix stripped, or null if no suffix.
+function resolveProxySuffix(
+  content: string,
+  message: Message,
+  session: ReceiptSession,
+): { proxyId: string; stripped: string } | null {
+  const match = content.match(/^(.*?)\s+as\s+(\S+)\s*$/i);
+  if (!match) return null;
+  if (message.author.id !== session.primaryUserId) return null;
+
+  const name = match[2].trim();
+  const proxyId = session.taggedUserIds.find(
+    (id) => isProxyUserId(id) && id.slice(6).toLowerCase() === name.toLowerCase(),
+  );
+  if (!proxyId) return null;
+
+  return { proxyId, stripped: match[1].trim() };
 }
 
 // Returns all proxy targets for paid/unpaid, which can act on multiple users at once.
@@ -550,13 +580,17 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
   }
 
   // Strip mentions from content so proxy commands parse cleanly
-  const contentClean = message.content
+  let contentClean = message.content
     .replace(/<@!?\d+>/g, "")
     .trim()
     .toLowerCase();
 
-  // Proxy target: if primary user tags a secondary user, act on their behalf
-  const proxyTarget = getProxyTarget(message, session);
+  // Proxy-by-name via trailing `as <name>` — only primary user
+  const proxyByName = resolveProxySuffix(contentClean, message, session);
+  if (proxyByName) contentClean = proxyByName.stripped;
+
+  // Proxy-by-mention: if primary user tags a secondary user, act on their behalf
+  const proxyTarget = proxyByName?.proxyId ?? getProxyTarget(message, session);
   const effectiveUserId = proxyTarget ?? message.author.id;
 
   if (contentClean === "sum paid" || contentClean === "sp") {
@@ -594,14 +628,28 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
     return;
   }
 
+  if (contentClean === "help" || contentClean === "h") {
+    await message.reply(formatThreadHelp());
+    return;
+  }
+
+  if (contentClean.startsWith("addproxy ") || contentClean.startsWith("ap ")) {
+    await handleAddProxy(message, session);
+    return;
+  }
+
   if (contentClean === "paid" || contentClean === "done" || contentClean === "p") {
-    const targets = getProxyTargets(message, session) ?? [message.author.id];
+    const targets = proxyByName
+      ? [proxyByName.proxyId]
+      : getProxyTargets(message, session) ?? [message.author.id];
     for (const t of targets) await handlePaid(message, session, t);
     return;
   }
 
   if (contentClean === "unpaid" || contentClean === "up") {
-    const targets = getProxyTargets(message, session) ?? [message.author.id];
+    const targets = proxyByName
+      ? [proxyByName.proxyId]
+      : getProxyTargets(message, session) ?? [message.author.id];
     for (const t of targets) await handleUnpaid(message, session, t);
     return;
   }
@@ -949,6 +997,53 @@ async function handleSplit(
   if (failures.length > 0) {
     await message.reply(failures.join("\n"));
   }
+
+  const refreshedSession = manager.getSession(
+    (message.channel as ThreadChannel).id,
+  )!;
+  await updateSummaryMessage(message, refreshedSession);
+}
+
+async function handleAddProxy(
+  message: Message,
+  session: ReceiptSession,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can add a proxy.");
+    return;
+  }
+
+  const raw = message.content.replace(/<@!?\d+>/g, "").trim();
+  const prefix = raw.match(/^(addproxy|ap)\s+/i);
+  if (!prefix) {
+    await message.reply("Usage: `addproxy <name>` — creates a placeholder user.");
+    return;
+  }
+  const name = raw.slice(prefix[0].length).trim();
+
+  if (!name) {
+    await message.reply("Please provide a name for the proxy, e.g. `addproxy Alice`.");
+    return;
+  }
+  if (/\s/.test(name)) {
+    await message.reply("Proxy names can't contain spaces — use a single word.");
+    return;
+  }
+
+  const proxyId = makeProxyUserId(name);
+  const exists = session.taggedUserIds.some(
+    (id) => isProxyUserId(id) && id.slice(6).toLowerCase() === name.toLowerCase(),
+  );
+  if (exists) {
+    await message.reply(`A proxy named **${name}** already exists on this receipt.`);
+    return;
+  }
+
+  manager.addUserToSession(session.id, proxyId);
+
+  await message.reply(
+    `Added proxy **${name}**. Use \`claim 1 3 as ${name}\`, \`paid as ${name}\`, etc. to act on their behalf.`,
+  );
 
   const refreshedSession = manager.getSession(
     (message.channel as ThreadChannel).id,
