@@ -9,7 +9,7 @@ function required(name: string): string {
   return value;
 }
 
-const DEFAULT_MODIFIER_PREFIXES = "add ,extra ,side ,sub ,w/ ,with ,no ";
+const DEFAULT_MODIFIER_PREFIXES = "add ,extra ,w/ ,with ";
 
 export const config = {
   discordToken: required("DISCORD_TOKEN"),

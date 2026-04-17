@@ -60,26 +60,83 @@ export interface ParseResult {
   estimatedCostUsd: number;
 }
 
-// A line is treated as a modifier if its name starts with a configured modifier
-// prefix (e.g. "add ", "extra ", "sub ") or if its line_total is $0 (free option
-// lines are almost always modifiers). Indentation itself is handled by the Claude
-// prompt — this guardrail only catches leaked cases with clear naming signals.
-function looksLikeModifier(name: string): boolean {
-  const n = name.trim().toLowerCase();
+// A line is a likely modifier if it matches configured prefix patterns, has
+// quantity 1, and costs ≤$6. These guards prevent false positives like
+// "Sub Sandwich" or "No. 5 Combo" from being absorbed.
+function looksLikeModifier(item: RawReceiptItem): boolean {
+  if (item.quantity > 1) return false;
+  if (item.line_total > 6.0) return false;
+  const n = item.name.trim().toLowerCase();
   return config.modifierPrefixes.some((p) => n.startsWith(p));
 }
 
-function rollUpModifiers(items: RawReceiptItem[]): RawReceiptItem[] {
+// Appends a modifier's name to the parent item for display.
+function appendModifierName(parent: RawReceiptItem, modifier: RawReceiptItem): void {
+  const suffix = modifier.name.trim();
+  if (suffix && !parent.name.toLowerCase().includes(suffix.toLowerCase())) {
+    parent.name = `${parent.name} + ${suffix}`;
+  }
+}
+
+// Subtotal-guided modifier rollup. Uses the receipt subtotal to decide whether
+// Claude already folded modifier prices into parents (drop duplicates) or
+// leaked them as separate lines (roll up into parent).
+function rollUpModifiers(items: RawReceiptItem[], subtotal: number): RawReceiptItem[] {
+  // Identify candidate modifier lines (non-zero priced)
+  const candidates: { index: number; item: RawReceiptItem }[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].line_total > 0 && looksLikeModifier(items[i])) {
+      candidates.push({ index: i, item: items[i] });
+    }
+  }
+
+  const rawSum = items.reduce((s, it) => s + it.line_total, 0);
+  const modifierSum = candidates.reduce((s, c) => s + c.item.line_total, 0);
+  const candidateIndices = new Set(candidates.map((c) => c.index));
+
+  // diffWith: what the diff is if we keep modifiers as standalone items
+  const diffWith = Math.abs(rawSum - subtotal);
+  // diffWithout: what the diff is if we drop modifier lines entirely
+  // (implying Claude already folded their prices into parents)
+  const diffWithout = Math.abs(rawSum - modifierSum - subtotal);
+
+  // Decide strategy:
+  // - "drop":  Claude already folded prices → remove modifier lines (don't re-add)
+  // - "merge": Claude leaked modifiers   → roll their prices into the parent
+  // - "keep":  uncertain                  → leave items as-is (conservative)
+  let strategy: "drop" | "merge" | "keep";
+  if (candidates.length === 0) {
+    strategy = "keep";
+  } else if (diffWithout < diffWith) {
+    strategy = "drop";
+  } else if (diffWith < diffWithout) {
+    strategy = "merge";
+  } else {
+    strategy = "keep"; // tie → conservative
+  }
+
   const result: RawReceiptItem[] = [];
-  for (const item of items) {
-    const isZero = item.line_total === 0;
-    const isModifier = isZero || looksLikeModifier(item.name);
-    if (isModifier && result.length > 0) {
-      const parent = result[result.length - 1];
-      parent.line_total = Math.round((parent.line_total + item.line_total) * 100) / 100;
-      const suffix = item.name.trim();
-      if (suffix && !parent.name.toLowerCase().includes(suffix.toLowerCase())) {
-        parent.name = `${parent.name} + ${suffix}`;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+
+    // $0 items always merge into preceding parent (no pricing impact, just declutter)
+    if (item.line_total === 0 && result.length > 0) {
+      appendModifierName(result[result.length - 1], item);
+      continue;
+    }
+
+    if (candidateIndices.has(i)) {
+      if (strategy === "drop" && result.length > 0) {
+        // Claude already summed this into the parent → just append name, skip price
+        appendModifierName(result[result.length - 1], item);
+      } else if (strategy === "merge" && result.length > 0) {
+        // Claude leaked this modifier → add price to parent
+        const parent = result[result.length - 1];
+        parent.line_total = Math.round((parent.line_total + item.line_total) * 100) / 100;
+        appendModifierName(parent, item);
+      } else {
+        // "keep" or no parent → leave as standalone
+        result.push({ ...item });
       }
     } else {
       result.push({ ...item });
@@ -118,6 +175,8 @@ MODIFIERS / ADD-ONS: Many receipts show modifiers, add-ons, options, or customiz
 
 A line is a MODIFIER if it is visually indented under another item, starts with words like "Add", "Extra", "Side", or describes a sub-choice (meat type, temperature, side). A line is a PARENT item if it has its own quantity in the leftmost column.
 
+IMPORTANT: Do NOT output both a summed parent line_total AND a separate modifier entry. Each modifier's price should appear ONLY in the parent's line_total, never as its own item. For example, if "Burrito" has line_total 19.87 (already including $1.08 guacamole), do NOT also emit "Add Guacamole" as a separate item.
+
 Output one JSON object per PARENT receipt line — do not expand or split quantities, that will be handled separately.
 
 Also extract subtotal, discount (0 if none), tax, tip (null if not on receipt), and total. Discount is any coupon, promo, or discount line that reduces the subtotal.
@@ -145,7 +204,7 @@ ${JSON.stringify(RECEIPT_SCHEMA)}`,
 
   // Guardrail: detect modifier/add-on lines that Claude emitted as separate items
   // and roll their line_total into the preceding parent item.
-  raw.items = rollUpModifiers(raw.items);
+  raw.items = rollUpModifiers(raw.items, raw.subtotal);
 
   const discount = raw.discount ?? 0;
   // Discount factor scales each item price proportionally so they sum to (subtotal - discount)
