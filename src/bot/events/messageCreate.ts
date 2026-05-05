@@ -622,7 +622,10 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
   }
 
   if (contentClean.startsWith("split ") || contentClean.startsWith("s ")) {
-    await handleSplit(message, session, effectiveUserId);
+    // For split, mentions are participants — not proxy targets. Only the
+    // `as <name>` suffix can shift the acting user.
+    const splitActor = proxyByName?.proxyId ?? message.author.id;
+    await handleSplit(message, session, splitActor);
     return;
   }
 
@@ -946,36 +949,113 @@ async function handleSplit(
   session: ReceiptSession,
   effectiveUserId: string,
 ): Promise<void> {
-  // Strip mentions so numbers in mention IDs don't confuse parsing
-  const stripped = message.content.replace(/<@!?\d+>/g, "").trim();
-  // Drop the command prefix (split / s) then parse remaining tokens as item numbers
-  const afterPrefix = stripped.replace(/^(split|s)\s+/i, "");
-  const itemIndices = parseItemNumbers(afterPrefix);
+  // Tokenize the original content (with mentions intact) so we can pair
+  // each `<@id>` with an optional following `NN%` percentage token.
+  const raw = message.content
+    .replace(/^.*?\b(split|s)\b\s*/i, "")
+    .trim();
+  const tokens = raw.split(/\s+/).filter((t) => t.length > 0);
+
+  // Item numbers come before the first mention; user/pct pairs come after.
+  const itemIndices: number[] = [];
+  let i = 0;
+  for (; i < tokens.length; i++) {
+    if (/^<@!?\d+>$/.test(tokens[i])) break;
+    if (/^\d+$/.test(tokens[i])) {
+      const n = parseInt(tokens[i], 10);
+      if (!itemIndices.includes(n)) itemIndices.push(n);
+    }
+  }
+  itemIndices.sort((a, b) => a - b);
+
   if (itemIndices.length === 0) {
-    await message.reply("Usage: `split <item number(s)> @user1 @user2`");
+    await message.reply(
+      "Usage: `split <item#> [<item#>...] @user1 [pct%] @user2 [pct%]`",
+    );
     return;
   }
 
-  const mentionedIds = message.mentions.users
-    .filter((u) => !u.bot)
-    .map((u) => u.id);
-  const allUserIds = [
-    effectiveUserId,
-    ...mentionedIds.filter((id) => id !== effectiveUserId),
-  ];
+  const explicit: { userId: string; pct: number | null }[] = [];
+  for (; i < tokens.length; i++) {
+    const m = tokens[i].match(/^<@!?(\d+)>$/);
+    if (!m) continue;
+    const userId = m[1];
+    if (userId === message.client.user!.id) continue;
+    let pct: number | null = null;
+    const next = tokens[i + 1];
+    if (next) {
+      const pctMatch = next.match(/^(\d+(?:\.\d+)?)%$/);
+      if (pctMatch) {
+        pct = parseFloat(pctMatch[1]);
+        i++;
+      }
+    }
+    explicit.push({ userId, pct });
+  }
 
-  if (allUserIds.length < 2) {
+  if (explicit.length === 0) {
+    await message.reply("Please mention at least one user to split with.");
+    return;
+  }
+
+  const anyPct = explicit.some((p) => p.pct !== null);
+
+  let participants: { userId: string; pct: number | null }[];
+  if (!anyPct) {
+    // Even split — auto-include the actor.
+    const ids = [
+      effectiveUserId,
+      ...explicit.map((p) => p.userId).filter((id) => id !== effectiveUserId),
+    ];
+    participants = ids.map((id) => ({ userId: id, pct: null }));
+  } else {
+    const missingPct = explicit.filter((p) => p.pct === null);
+    if (missingPct.length > 0) {
+      const names = missingPct.map((p) => `<@${p.userId}>`).join(", ");
+      await message.reply(
+        `If you specify percentages, every user needs one. Missing for: ${names}.`,
+      );
+      return;
+    }
+    const sum = explicit.reduce((s, p) => s + p.pct!, 0);
+    if (sum > 100.01) {
+      await message.reply(
+        `Percentages sum to ${sum.toFixed(2)}%, which exceeds 100%.`,
+      );
+      return;
+    }
+    const includesActor = explicit.some((p) => p.userId === effectiveUserId);
+    const remainder = 100 - sum;
+    if (remainder > 0.01 && !includesActor) {
+      participants = [
+        { userId: effectiveUserId, pct: Math.round(remainder * 100) / 100 },
+        ...explicit.map((p) => ({ userId: p.userId, pct: p.pct })),
+      ];
+    } else if (Math.abs(sum - 100) > 0.01) {
+      await message.reply(
+        `Percentages sum to ${sum.toFixed(2)}% but should sum to 100%.`,
+      );
+      return;
+    } else {
+      participants = explicit.map((p) => ({ userId: p.userId, pct: p.pct }));
+    }
+  }
+
+  if (participants.length < 2) {
     await message.reply(
       "Please mention at least one other user to split the item(s) with.",
     );
     return;
   }
 
+  const userIds = participants.map((p) => p.userId);
+  const sharePcts = anyPct ? participants.map((p) => p.pct!) : null;
+
   const succeeded: number[] = [];
   const failures: string[] = [];
   for (const itemIndex of itemIndices) {
     try {
-      manager.splitItem(session.id, itemIndex, allUserIds);
+      manager.splitItem(session.id, itemIndex, userIds, sharePcts);
       succeeded.push(itemIndex);
     } catch (err) {
       failures.push(
@@ -985,15 +1065,29 @@ async function handleSplit(
   }
 
   const displayName = await getDisplayNameResolver(message, session);
-  const names = allUserIds.map((id) => displayName(id)).join(", ");
+  const names = participants
+    .map((p) =>
+      anyPct
+        ? `${displayName(p.userId)} (${p.pct!.toFixed(0)}%)`
+        : displayName(p.userId),
+    )
+    .join(", ");
 
   if (succeeded.length > 0) {
     const items = manager.getItems(session.id);
     const lines = succeeded.map((idx) => {
       const item = items.find((i) => i.index === idx);
-      const perPerson = item
-        ? (item.unitPrice / allUserIds.length).toFixed(2)
-        : "?";
+      if (!item) return `Item ${idx}: split applied`;
+      if (anyPct) {
+        const perUser = participants
+          .map((p) => {
+            const amt = (item.unitPrice * (p.pct! / 100)).toFixed(2);
+            return `${displayName(p.userId)} $${amt}`;
+          })
+          .join(", ");
+        return `Item ${idx}: ${perUser}`;
+      }
+      const perPerson = (item.unitPrice / participants.length).toFixed(2);
       return `Item ${idx}: $${perPerson} each`;
     });
     const header =

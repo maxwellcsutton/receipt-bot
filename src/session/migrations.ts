@@ -57,6 +57,7 @@ export function initDatabase(): void {
       line_item_index INTEGER NOT NULL,
       user_id TEXT NOT NULL,
       share_count INTEGER NOT NULL,
+      share_pct REAL,
       PRIMARY KEY (session_id, line_item_index, user_id),
       FOREIGN KEY (session_id) REFERENCES receipt_sessions(id)
     );
@@ -98,5 +99,13 @@ export function initDatabase(): void {
     db.exec(
       "ALTER TABLE receipt_sessions ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0"
     );
+  }
+
+  // Migration: add share_pct to split_items for uneven splits (NULL = even split)
+  const splitCols = db
+    .prepare("PRAGMA table_info(split_items)")
+    .all() as { name: string }[];
+  if (!splitCols.some((c) => c.name === "share_pct")) {
+    db.exec("ALTER TABLE split_items ADD COLUMN share_pct REAL");
   }
 }

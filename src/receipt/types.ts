@@ -27,6 +27,7 @@ export interface SplitEntry {
   lineItemIndex: number;
   userId: string;
   shareCount: number;
+  sharePct: number | null;
 }
 
 export type SessionStatus = "active" | "all_claimed" | "settled" | "voided";

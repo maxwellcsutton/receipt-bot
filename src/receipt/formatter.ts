@@ -60,11 +60,20 @@ export function buildUserEmbed(
     const itemSplits = splitMap.get(item.index);
     let splitNote = "";
     if (itemSplits && itemSplits.length > 1) {
+      const allHavePct = itemSplits.every((s) => s.sharePct !== null);
       const others = itemSplits
         .filter((s) => s.userId !== ut.userId)
-        .map((s) => displayName(s.userId))
+        .map((s) =>
+          allHavePct
+            ? `${displayName(s.userId)} ${s.sharePct!.toFixed(0)}%`
+            : displayName(s.userId),
+        )
         .join(", ");
-      splitNote = ` (split with ${others} — $${item.amount.toFixed(2)} each)`;
+      const mine = itemSplits.find((s) => s.userId === ut.userId);
+      const suffix = allHavePct && mine?.sharePct != null
+        ? `your ${mine.sharePct.toFixed(0)}% — $${item.amount.toFixed(2)}`
+        : `$${item.amount.toFixed(2)} each`;
+      splitNote = ` (split with ${others} — ${suffix})`;
     }
     return `${INDENT}**${item.index}.** ${item.name} — $${item.amount.toFixed(2)}${splitNote}`;
   });
@@ -136,7 +145,7 @@ export function formatItemList(taggedUserIds: string[]): string {
     "**Commands:**",
     "`claim 1 3 5` / `c 1 3 5` — claim items by number",
     "`unclaim 1 3` / `uc 1 3` — release claimed items",
-    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split item(s) between users",
+    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split item(s) between users (add `30%` after a mention for uneven splits)",
     "`tip 20%` / `t 20%` — set tip (primary user only)",
     "`paid` / `p` — mark yourself as paid",
     "_Reply `help` for more commands._",
@@ -150,7 +159,8 @@ export function formatThreadHelp(): string {
     "**Receipt thread commands:**",
     "`claim 1 3 5` / `c 1 3 5` — claim items by number",
     "`unclaim 1 3` / `uc 1 3` — release claimed items",
-    "`split 3 @user1 @user2` / `s 3 @user1 @user2` — split item(s) between users (accepts multiple item numbers)",
+    "`split 3 5 @user1 @user2` / `s 3 5 @user1 @user2` — split one or more items evenly between users",
+    "`split 3 @user1 30% @user2 70%` — split with uneven percentages (must sum to 100%; if they sum to <100%, the author gets the remainder)",
     "`tip 20%` / `t 20%` — set tip (primary user only)",
     "`paid` / `p` — mark yourself as paid",
     "`unpaid` / `up` — mark yourself as unpaid",

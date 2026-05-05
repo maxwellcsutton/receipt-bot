@@ -61,9 +61,10 @@ export function removeItem(sessionId: string, itemIndex: number): void {
 export function splitItem(
   sessionId: string,
   itemIndex: number,
-  userIds: string[]
+  userIds: string[],
+  sharePcts?: number[] | null,
 ): void {
-  store.splitItem(sessionId, itemIndex, userIds);
+  store.splitItem(sessionId, itemIndex, userIds, sharePcts);
 }
 
 export function setRestaurantName(sessionId: string, name: string): void {

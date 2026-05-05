@@ -25,10 +25,13 @@ export function calculateUserTotals(
     const itemSplits = splitMap.get(`${item.index}`);
 
     if (itemSplits && itemSplits.length > 0) {
-      // Item is split among multiple users
-      const shareAmount =
-        Math.round((item.unitPrice / itemSplits.length) * 100) / 100;
+      // Item is split among multiple users — by percentage if all entries
+      // carry sharePct, otherwise an even split across all participants.
+      const allHavePct = itemSplits.every((s) => s.sharePct !== null);
       for (const split of itemSplits) {
+        const shareAmount = allHavePct
+          ? Math.round(item.unitPrice * (split.sharePct! / 100) * 100) / 100
+          : Math.round((item.unitPrice / itemSplits.length) * 100) / 100;
         if (!userItems.has(split.userId)) userItems.set(split.userId, []);
         userItems.get(split.userId)!.push({
           index: item.index,

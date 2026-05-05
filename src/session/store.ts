@@ -211,8 +211,13 @@ export function removeItem(sessionId: string, itemIndex: number): void {
 export function splitItem(
   sessionId: string,
   itemIndex: number,
-  userIds: string[]
+  userIds: string[],
+  sharePcts?: number[] | null,
 ): void {
+  if (sharePcts && sharePcts.length !== userIds.length) {
+    throw new Error("sharePcts length must match userIds length");
+  }
+
   const db = getDb();
   const item = db
     .prepare(
@@ -222,7 +227,7 @@ export function splitItem(
   if (!item) throw new Error(`Item ${itemIndex} does not exist.`);
 
   const insertSplit = db.prepare(
-    "INSERT OR REPLACE INTO split_items (session_id, line_item_index, user_id, share_count) VALUES (?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO split_items (session_id, line_item_index, user_id, share_count, share_pct) VALUES (?, ?, ?, ?, ?)"
   );
   const transaction = db.transaction(() => {
     // Mark the item as claimed by the first user (as the "owner" for display)
@@ -235,8 +240,10 @@ export function splitItem(
       "DELETE FROM split_items WHERE session_id = ? AND line_item_index = ?"
     ).run(sessionId, itemIndex);
 
-    for (const userId of userIds) {
-      insertSplit.run(sessionId, itemIndex, userId, userIds.length);
+    for (let i = 0; i < userIds.length; i++) {
+      const userId = userIds[i];
+      const pct = sharePcts ? sharePcts[i] : null;
+      insertSplit.run(sessionId, itemIndex, userId, userIds.length, pct);
       ensureUserPayment(sessionId, userId);
     }
   });
@@ -253,6 +260,7 @@ export function getSplitItems(sessionId: string): SplitEntry[] {
     lineItemIndex: r.line_item_index,
     userId: r.user_id,
     shareCount: r.share_count,
+    sharePct: r.share_pct ?? null,
   }));
 }
 
