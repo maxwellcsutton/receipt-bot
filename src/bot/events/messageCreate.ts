@@ -478,8 +478,7 @@ async function handleNewReceipt(
 
   if (warning) {
     const itemsSum = allItems.reduce((s, i) => s + i.unitPrice, 0);
-    const effectiveSubtotal = parsed.subtotal - (parsed.discount ?? 0);
-    const retryHint = `Previous scan produced items summing to $${itemsSum.toFixed(2)} vs subtotal $${effectiveSubtotal.toFixed(2)}. Ensure modifier/add-on prices are included in the parent item's line_total, not listed separately.`;
+    const retryHint = `Previous scan produced items summing to $${itemsSum.toFixed(2)} vs subtotal $${parsed.subtotal.toFixed(2)}. Ensure modifier/add-on prices are included in the parent item's line_total, not listed separately.`;
     const retry = await parseReceiptImage(imageBase64, mediaType, retryHint);
     manager.logApiCost(retry.estimatedCostUsd);
     const retryItems = expandLineItems(retry.parsed);

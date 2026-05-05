@@ -111,6 +111,12 @@ export function buildSummaryEmbeds(
   const discountStr = discountAmount > 0 ? ` | Discount: -$${discountAmount.toFixed(2)}` : "";
   const footerText = `Subtotal: $${session.subtotal.toFixed(2)}${discountStr} | Tax: $${session.taxAmount.toFixed(2)} | Tip: ${tipStr} | Total: $${computedTotal.toFixed(2)}`;
 
+  // Discount factor matches calculator.ts — items are stored raw and adjusted at display time.
+  const discountFactor =
+    session.subtotal > 0 && discountAmount > 0
+      ? (session.subtotal - discountAmount) / session.subtotal
+      : 1;
+
   const embeds: EmbedBuilder[] = [];
 
   // Embed 1: header + unclaimed items
@@ -120,9 +126,10 @@ export function buildSummaryEmbeds(
     .setFooter({ text: footerText });
 
   if (unclaimed.length > 0) {
-    const lines = unclaimed.map(
-      (i) => `${INDENT}**${i.index}.** ${i.name} — $${i.unitPrice.toFixed(2)}`
-    );
+    const lines = unclaimed.map((i) => {
+      const adjusted = Math.round(i.unitPrice * discountFactor * 100) / 100;
+      return `${INDENT}**${i.index}.** ${i.name} — $${adjusted.toFixed(2)}`;
+    });
     addChunkedFields(headerEmbed, "UNCLAIMED", lines);
   } else {
     headerEmbed.setDescription("All items have been claimed.");

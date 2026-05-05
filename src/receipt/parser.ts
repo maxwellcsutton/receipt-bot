@@ -206,25 +206,21 @@ ${JSON.stringify(RECEIPT_SCHEMA)}`,
   // and roll their line_total into the preceding parent item.
   raw.items = rollUpModifiers(raw.items, raw.subtotal);
 
-  const discount = raw.discount ?? 0;
-  // Discount factor scales each item price proportionally so they sum to (subtotal - discount)
-  const discountFactor = raw.subtotal > 0 && discount > 0
-    ? (raw.subtotal - discount) / raw.subtotal
-    : 1;
-
+  // Items are stored at their RAW (pre-discount) prices. Any session-level
+  // discount is applied at calc/display time so discount changes flow through
+  // to every item — parsed or custom-added.
   const parsed: ParsedReceipt = {
     items: raw.items.map((item) => {
-      const rawUnitPrice = item.line_total / item.quantity;
-      const discountedUnitPrice = Math.round(rawUnitPrice * discountFactor * 100) / 100;
+      const unitPrice = Math.round((item.line_total / item.quantity) * 100) / 100;
       return {
         name: item.name,
         quantity: item.quantity,
-        unit_price: discountedUnitPrice,
-        total_price: Math.round(item.line_total * discountFactor * 100) / 100,
+        unit_price: unitPrice,
+        total_price: Math.round(item.line_total * 100) / 100,
       };
     }),
     subtotal: raw.subtotal,
-    discount,
+    discount: raw.discount ?? 0,
     tax: raw.tax,
     tip: raw.tip,
     total: raw.total,
@@ -276,8 +272,7 @@ export function subtotalItemsDiff(
   items: LineItem[],
 ): number {
   const itemsSum = items.reduce((sum, item) => sum + item.unitPrice, 0);
-  const effectiveSubtotal = parsed.subtotal - (parsed.discount ?? 0);
-  return Math.abs(itemsSum - effectiveSubtotal);
+  return Math.abs(itemsSum - parsed.subtotal);
 }
 
 export function validateReceipt(
@@ -285,10 +280,9 @@ export function validateReceipt(
   items: LineItem[]
 ): string | null {
   const itemsSum = items.reduce((sum, item) => sum + item.unitPrice, 0);
-  const effectiveSubtotal = parsed.subtotal - (parsed.discount ?? 0);
-  const diff = Math.abs(itemsSum - effectiveSubtotal);
+  const diff = Math.abs(itemsSum - parsed.subtotal);
   if (diff > 0.5) {
-    return `Warning: Item prices sum to $${itemsSum.toFixed(2)} but receipt subtotal is $${effectiveSubtotal.toFixed(2)} (difference: $${diff.toFixed(2)}).`;
+    return `Warning: Item prices sum to $${itemsSum.toFixed(2)} but receipt subtotal is $${parsed.subtotal.toFixed(2)} (difference: $${diff.toFixed(2)}).`;
   }
   return null;
 }

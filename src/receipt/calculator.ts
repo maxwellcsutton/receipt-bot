@@ -12,6 +12,16 @@ export function calculateUserTotals(
     splitMap.get(key)!.push(s);
   }
 
+  // Items are stored at raw (pre-discount) prices; apply the discount factor
+  // at calc time so changes to session.discountAmount flow through to every
+  // item — parsed or custom-added.
+  const discount = session.discountAmount ?? 0;
+  const factor =
+    session.subtotal > 0 && discount > 0
+      ? (session.subtotal - discount) / session.subtotal
+      : 1;
+  const round = (n: number) => Math.round(n * 100) / 100;
+
   // Build per-user item costs
   const userItems = new Map<
     string,
@@ -22,6 +32,7 @@ export function calculateUserTotals(
   for (const item of items) {
     if (!item.claimedByUserId) continue;
 
+    const adjustedUnit = round(item.unitPrice * factor);
     const itemSplits = splitMap.get(`${item.index}`);
 
     if (itemSplits && itemSplits.length > 0) {
@@ -30,8 +41,8 @@ export function calculateUserTotals(
       const allHavePct = itemSplits.every((s) => s.sharePct !== null);
       for (const split of itemSplits) {
         const shareAmount = allHavePct
-          ? Math.round(item.unitPrice * (split.sharePct! / 100) * 100) / 100
-          : Math.round((item.unitPrice / itemSplits.length) * 100) / 100;
+          ? round(adjustedUnit * (split.sharePct! / 100))
+          : round(adjustedUnit / itemSplits.length);
         if (!userItems.has(split.userId)) userItems.set(split.userId, []);
         userItems.get(split.userId)!.push({
           index: item.index,
@@ -50,11 +61,11 @@ export function calculateUserTotals(
       userItems.get(userId)!.push({
         index: item.index,
         name: item.name,
-        amount: item.unitPrice,
+        amount: adjustedUnit,
       });
       userTotalsMap.set(
         userId,
-        (userTotalsMap.get(userId) || 0) + item.unitPrice
+        (userTotalsMap.get(userId) || 0) + adjustedUnit
       );
     }
   }
