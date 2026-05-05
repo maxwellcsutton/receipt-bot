@@ -162,6 +162,7 @@ export function formatThreadHelp(): string {
     "`split 3 5 @user1 @user2` / `s 3 5 @user1 @user2` — split one or more items evenly between users",
     "`split 3 @user1 30% @user2 70%` — split with uneven percentages (must sum to 100%; if they sum to <100%, the author gets the remainder)",
     "`tip 20%` / `t 20%` — set tip (primary user only)",
+    "`discount 5.00` / `discount 15%` / `discount remove` — add, edit, or remove a discount (primary user only)",
     "`paid` / `p` — mark yourself as paid",
     "`unpaid` / `up` — mark yourself as unpaid",
     "`status` / `st` — show current claim status",

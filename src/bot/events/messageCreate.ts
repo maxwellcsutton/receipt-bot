@@ -616,6 +616,16 @@ async function handleThreadMessage(message: Message, client: Client): Promise<vo
     return;
   }
 
+  if (
+    contentClean === "discount" ||
+    contentClean.startsWith("discount ") ||
+    contentClean.startsWith("disc ") ||
+    contentClean === "disc"
+  ) {
+    await handleDiscountCommand(message, session, contentClean);
+    return;
+  }
+
   if (contentClean.startsWith("unclaim ") || contentClean.startsWith("uc ")) {
     await handleUnclaim(message, session, contentClean, effectiveUserId);
     return;
@@ -1342,6 +1352,60 @@ async function handleStatus(
     displayName,
   );
   await message.reply({ embeds });
+}
+
+async function handleDiscountCommand(
+  message: Message,
+  session: ReceiptSession,
+  contentClean: string,
+): Promise<void> {
+  if (message.author.id !== session.primaryUserId) {
+    await message.reply("Only the primary user can change the discount.");
+    return;
+  }
+
+  let arg = "";
+  if (contentClean.startsWith("discount ")) arg = contentClean.slice("discount ".length).trim();
+  else if (contentClean.startsWith("disc ")) arg = contentClean.slice("disc ".length).trim();
+
+  if (!arg || arg === "remove" || arg === "rm" || arg === "0") {
+    manager.setDiscount(session.id, 0);
+    await message.reply("Discount removed.");
+    const refreshed = manager.getSession((message.channel as ThreadChannel).id)!;
+    await updateSummaryMessage(message, refreshed);
+    return;
+  }
+
+  let amount: number;
+  if (arg.endsWith("%")) {
+    const pct = parseFloat(arg.slice(0, -1));
+    if (isNaN(pct) || pct < 0) {
+      await message.reply("Invalid discount percentage. Use e.g. `discount 15%`.");
+      return;
+    }
+    amount = Math.round(session.subtotal * (pct / 100) * 100) / 100;
+  } else {
+    amount = parseFloat(arg.replace("$", ""));
+    if (isNaN(amount) || amount < 0) {
+      await message.reply(
+        "Invalid discount. Use e.g. `discount 5.00`, `discount 15%`, or `discount remove`.",
+      );
+      return;
+    }
+  }
+
+  if (amount > session.subtotal) {
+    await message.reply(
+      `Discount $${amount.toFixed(2)} exceeds subtotal $${session.subtotal.toFixed(2)}.`,
+    );
+    return;
+  }
+
+  manager.setDiscount(session.id, amount);
+  await message.reply(`Discount set to $${amount.toFixed(2)}.`);
+
+  const refreshed = manager.getSession((message.channel as ThreadChannel).id)!;
+  await updateSummaryMessage(message, refreshed);
 }
 
 async function handleTipCommand(

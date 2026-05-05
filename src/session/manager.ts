@@ -75,6 +75,10 @@ export function setTip(sessionId: string, tipAmount: number): void {
   store.updateTip(sessionId, tipAmount);
 }
 
+export function setDiscount(sessionId: string, discountAmount: number): void {
+  store.updateDiscount(sessionId, discountAmount);
+}
+
 export function voidSession(sessionId: string): void {
   store.updateSessionStatus(sessionId, "voided");
 }

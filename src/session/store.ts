@@ -355,6 +355,13 @@ export function updateTip(sessionId: string, tipAmount: number): void {
   );
 }
 
+export function updateDiscount(sessionId: string, discountAmount: number): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE receipt_sessions SET discount_amount = ? WHERE id = ?",
+  ).run(discountAmount, sessionId);
+}
+
 export function replaceSessionItems(
   sessionId: string,
   items: LineItem[],
